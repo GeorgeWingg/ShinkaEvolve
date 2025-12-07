@@ -72,9 +72,40 @@ def construct_individual_program_msg(
     language: str = "python",
     include_text_feedback: bool = False,
 ) -> str:
-    """Construct a message for a single program for individual analysis."""
+    """Construct a message for a single program for individual analysis.
+
+    Supports both single-file (program.code) and multi-file (metadata["all_code"])
+    programs for agentic mode compatibility.
+    """
     program_str = "# Program to Analyze\n\n"
-    program_str += f"```{language}\n{program.code}\n```\n\n"
+
+    # Check for multi-file content in metadata (agentic mode)
+    all_code = program.metadata.get("all_code", {}) if program.metadata else {}
+    if all_code and isinstance(all_code, dict) and len(all_code) > 0:
+        # Multi-file: format each file separately
+        program_str += f"## Files ({len(all_code)} total)\n\n"
+        for filepath, content in sorted(all_code.items()):
+            # Determine language from file extension if possible
+            file_lang = language
+            if filepath.endswith(".py"):
+                file_lang = "python"
+            elif filepath.endswith(".rs"):
+                file_lang = "rust"
+            elif filepath.endswith(".go"):
+                file_lang = "go"
+            elif filepath.endswith(".cpp") or filepath.endswith(".cc"):
+                file_lang = "cpp"
+            elif filepath.endswith(".js"):
+                file_lang = "javascript"
+            elif filepath.endswith(".ts"):
+                file_lang = "typescript"
+
+            program_str += f"### File: {filepath}\n"
+            program_str += f"```{file_lang}\n{content}\n```\n\n"
+    else:
+        # Single file fallback (legacy mode)
+        program_str += f"```{language}\n{program.code}\n```\n\n"
+
     program_str += (
         f"Performance metrics:\n"
         f"{perf_str(program.combined_score, program.public_metrics)}\n\n"

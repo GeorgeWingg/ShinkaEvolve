@@ -71,6 +71,10 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+results/
+
+# LLM Review test results
+tests/llm_reviews/results/
 
 # PyBuilder
 .pybuilder/

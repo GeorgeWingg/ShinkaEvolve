@@ -1,6 +1,9 @@
-from typing import List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 import logging
 import json
+import shutil
+import tempfile
+import uuid
 from pathlib import Path
 from shinka.database import Program
 from shinka.llm import LLMClient
@@ -23,11 +26,15 @@ class MetaSummarizer:
     def __init__(
         self,
         meta_llm_client: Optional[LLMClient] = None,
+        agent_runner: Optional[Callable[..., Iterator[Dict[str, Any]]]] = None,
+        agent_workdir: Optional[Path] = None,
         language: str = "python",
         use_text_feedback: bool = False,
         max_recommendations: int = 5,
     ):
         self.meta_llm_client = meta_llm_client
+        self.agent_runner = agent_runner
+        self.agent_workdir = agent_workdir or Path(tempfile.gettempdir()) / "shinka_meta_queries"
         self.language = language
         self.use_text_feedback = use_text_feedback
         self.max_recommendations = max_recommendations
@@ -75,12 +82,78 @@ class MetaSummarizer:
         Now triggers based on the number of unprocessed programs rather than
         generation intervals for better timing with parallel jobs.
         """
-        if meta_rec_interval is None or not self.meta_llm_client:
+        # Need either meta_llm_client or agent_runner to perform updates
+        if meta_rec_interval is None or (not self.meta_llm_client and not self.agent_runner):
             return False
 
         # Use number of unprocessed programs instead of generation count
         unprocessed_count = len(self.evaluated_since_last_meta)
         return unprocessed_count >= meta_rec_interval
+
+    def _query_via_agent(
+        self, user_msg: str, system_msg: str
+    ) -> Tuple[Optional[str], float]:
+        """Query using CLI backend (agent_runner), extract text from events.
+
+        This allows MetaSummarizer to use CLI backends (Codex/Gemini/Claude)
+        instead of direct LLMClient for agentic mode parity.
+
+        Args:
+            user_msg: The user prompt to send
+            system_msg: The system prompt/instructions
+
+        Returns:
+            Tuple of (response_text, cost). Cost is always 0.0 since
+            agent_runner doesn't provide cost tracking.
+        """
+        if not self.agent_runner:
+            return None, 0.0
+
+        # Ensure base workdir exists
+        self.agent_workdir.mkdir(parents=True, exist_ok=True)
+
+        # Create unique workdir for this query
+        query_workdir = self.agent_workdir / str(uuid.uuid4())
+        query_workdir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            response_text = ""
+            for event in self.agent_runner(
+                user_prompt=user_msg,
+                workdir=query_workdir,
+                system_prompt=system_msg,
+                profile=None,
+                sandbox="",
+                approval_mode="full-auto",
+                max_seconds=300,
+                max_events=100,
+                extra_cli_config={},
+                session_kind="meta",
+            ):
+                # Extract text from agent_message events
+                if event.get("type") == "agent_message":
+                    item = event.get("item", {})
+                    text = item.get("text", "")
+                    if text:
+                        response_text += text
+
+            if response_text:
+                logger.debug(f"Agent query returned {len(response_text)} chars")
+                return response_text.strip(), 0.0
+            else:
+                logger.warning("Agent query returned empty response")
+                return None, 0.0
+
+        except Exception as e:
+            logger.error(f"Agent query failed: {e}")
+            return None, 0.0
+
+        finally:
+            # Clean up query workdir
+            try:
+                shutil.rmtree(query_workdir, ignore_errors=True)
+            except Exception:
+                pass
 
     def update_meta_memory(
         self, best_program: Optional[Program] = None
@@ -90,8 +163,8 @@ class MetaSummarizer:
         Returns tuple of (updated_recommendations, total_cost) or
         (None, 0.0) if no update occurred.
         """
-        if not self.meta_llm_client:
-            logger.warning("No meta LLM client configured")
+        if not self.meta_llm_client and not self.agent_runner:
+            logger.warning("No meta LLM client or agent_runner configured")
             return None, 0.0
 
         # Use recently evaluated programs for memory scratchpad
@@ -220,9 +293,63 @@ class MetaSummarizer:
     def _step1_individual_summaries(
         self, programs_to_analyze: List[Program]
     ) -> Tuple[Optional[str], float]:
-        """Step 1: Create individual summaries for each program using batch queries."""
+        """Step 1: Create individual summaries for each program.
+
+        Uses agent_runner (CLI backend) if available, otherwise falls back
+        to LLMClient batch queries.
+        """
         if not programs_to_analyze:
             logger.warning("No programs to analyze in Step 1")
+            return None, 0.0
+
+        num_programs = len(programs_to_analyze)
+
+        # Use agent_runner if available (sequential processing)
+        if self.agent_runner:
+            logger.info(f"==> Step 1 - Processing {num_programs} programs via agent_runner")
+            combined_summaries = []
+            total_cost = 0.0
+
+            for program in programs_to_analyze:
+                individual_program_msg = construct_individual_program_msg(
+                    program,
+                    language=self.language,
+                    include_text_feedback=self.use_text_feedback,
+                )
+                user_msg = META_STEP1_USER_MSG.replace(
+                    "{individual_program_msg}", individual_program_msg
+                )
+
+                response, cost = self._query_via_agent(user_msg, META_STEP1_SYSTEM_MSG)
+                total_cost += cost
+
+                if response:
+                    program_summary = response.strip()
+                    patch_name = program.metadata.get("patch_name", "unknown")
+                    program_summary += "\n**Program Identifier:** "
+                    program_summary += f"Generation {program.generation} - Patch Name {patch_name} - Correct Program: {program.correct}"
+                    combined_summaries.append((program.generation, program_summary))
+                else:
+                    logger.warning(f"Step 1: Empty response for program {program.id}")
+
+            # Sort by generation
+            combined_summaries.sort(key=lambda x: x[0])
+            summaries_only = [s for _, s in combined_summaries]
+
+            if not summaries_only:
+                logger.error("Step 1: No valid summaries generated via agent_runner")
+                return None, total_cost
+
+            final_summary = "\n\n".join(summaries_only)
+            logger.info(
+                f"==> Step 1 - {len(summaries_only)}/{num_programs} "
+                f"individual summaries generated via agent_runner"
+            )
+            return final_summary, total_cost
+
+        # Fall back to LLMClient batch queries
+        if not self.meta_llm_client:
+            logger.error("Step 1: No meta_llm_client or agent_runner available")
             return None, 0.0
 
         # Create individual program messages for batch processing
@@ -234,7 +361,7 @@ class MetaSummarizer:
                 include_text_feedback=self.use_text_feedback,
             )
             generation_ids.append(program.generation)
-            patch_names.append(program.metadata["patch_name"])
+            patch_names.append(program.metadata.get("patch_name", "unknown"))
             correct_programs.append(program.correct)
             user_msg = META_STEP1_USER_MSG.replace(
                 "{individual_program_msg}", individual_program_msg
@@ -242,7 +369,6 @@ class MetaSummarizer:
             user_messages.append(user_msg)
 
         # Use batch query to process all programs
-        num_programs = len(programs_to_analyze)
         logger.info(f"==> Step 1 - Processing {num_programs} programs with batch query")
         responses = self.meta_llm_client.batch_kwargs_query(
             num_samples=num_programs,
@@ -294,13 +420,14 @@ class MetaSummarizer:
     def _step2_global_insights(
         self, individual_summaries: str, best_program: Optional[Program] = None
     ) -> Tuple[Optional[str], float]:
-        """Step 2: Generate global insights from individual summaries."""
+        """Step 2: Generate global insights from individual summaries.
+
+        Uses agent_runner if available, otherwise falls back to LLMClient.
+        """
         previous_insights = self.meta_scratch_pad or "*No previous insights available.*"
 
         # Format best program information
         if best_program:
-            from shinka.prompts import construct_individual_program_msg
-
             best_program_info = construct_individual_program_msg(
                 best_program,
                 language=self.language,
@@ -314,6 +441,23 @@ class MetaSummarizer:
             .replace("{previous_insights}", previous_insights)
             .replace("{best_program_info}", best_program_info)
         )
+
+        # Use agent_runner if available
+        if self.agent_runner:
+            logger.info("==> Step 2 - Generating global insights via agent_runner")
+            response, cost = self._query_via_agent(user_msg, META_STEP2_SYSTEM_MSG)
+            if response:
+                logger.info("==> Step 2 - Global insights generated via agent_runner")
+                return response, cost
+            else:
+                logger.error("Step 2: Failed to get response from agent_runner")
+                return None, cost
+
+        # Fall back to LLMClient
+        if not self.meta_llm_client:
+            logger.error("Step 2: No meta_llm_client or agent_runner available")
+            return None, 0.0
+
         llm_params = self.meta_llm_client.get_kwargs()
         response = self.meta_llm_client.query(
             msg=user_msg,
@@ -332,15 +476,16 @@ class MetaSummarizer:
     def _step3_generate_recommendations(
         self, global_insights: str, best_program: Optional[Program] = None
     ) -> Tuple[Optional[str], float]:
-        """Step 3: Generate recommendations based on global insights."""
+        """Step 3: Generate recommendations based on global insights.
+
+        Uses agent_runner if available, otherwise falls back to LLMClient.
+        """
         previous_recommendations = (
             self.meta_recommendations or "*No previous recommendations available.*"
         )
 
         # Format best program information
         if best_program:
-            from shinka.prompts import construct_individual_program_msg
-
             best_program_info = construct_individual_program_msg(
                 best_program,
                 language=self.language,
@@ -355,6 +500,22 @@ class MetaSummarizer:
             .replace("{max_recommendations}", str(self.max_recommendations))
             .replace("{best_program_info}", best_program_info)
         )
+
+        # Use agent_runner if available
+        if self.agent_runner:
+            logger.info("==> Step 3 - Generating recommendations via agent_runner")
+            response, cost = self._query_via_agent(user_msg, META_STEP3_SYSTEM_MSG)
+            if response:
+                logger.info("==> Step 3 - Recommendations generated via agent_runner")
+                return response, cost
+            else:
+                logger.error("Step 3: Failed to get response from agent_runner")
+                return None, cost
+
+        # Fall back to LLMClient
+        if not self.meta_llm_client:
+            logger.error("Step 3: No meta_llm_client or agent_runner available")
+            return None, 0.0
 
         llm_params = self.meta_llm_client.get_kwargs()
         response = self.meta_llm_client.query(

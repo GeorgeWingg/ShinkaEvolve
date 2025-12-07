@@ -44,6 +44,7 @@ evo_config:
   # Task Configuration
   language: "python"               # Programming language
   init_program_path: "???"         # Path to initial program
+  init_support_dir: null            # Optional directory of helper files to copy into gen_0
   task_sys_msg: "???"             # System message for LLM
   job_type: "local"                # Job execution type
   results_dir: ${output_dir}       # Results directory
@@ -124,6 +125,7 @@ evo_config:
     Key insights: [domain knowledge]
   language: "python"
   init_program_path: "examples/my_task/initial.py"
+  init_support_dir: "examples/my_task"
   job_type: "slurm_conda"
 
 exp_name: "shinka_my_task"
@@ -143,6 +145,64 @@ exp_name: "shinka_my_task"
 | `patch_type_probs` | list | `[0.5, 0.5]` | Probabilities for patch types |
 | `language` | str | `"python"` | Programming language |
 | `embedding_model` | str | `"text-embedding-3-small"` | Model for code embeddings |
+| `init_support_dir` | Optional[str] | `None` | If set, copy this directory (minus logs/cache) into `gen_0` alongside `init_program_path`. |
+
+### Evaluator Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `evaluator.mode` | `"auto"\|"legacy"\|"agentic"` | `"auto"` | Chooses which evaluator to use. `auto` selects the agentic evaluator whenever `agentic_mode=true`, otherwise falls back to the legacy deterministic runner. Force `legacy` when you need the previous single-file pipeline. |
+| `evaluator.agentic.codex_profile` | Optional[str] | `null` | Codex profile to use for the evaluator agent. |
+| `evaluator.agentic.sandbox` | str | `"workspace-write"` | Sandbox passed to `codex exec` during evaluation. |
+| `evaluator.agentic.max_turns` | int | `80` | Maximum Codex events during evaluation. |
+| `evaluator.agentic.max_seconds` | int | `0` | Optional wall-clock cap (0 = unlimited). |
+| `evaluator.agentic.extra_cli_config` | dict | `{}` | Forwarded to `codex exec` (e.g., `{"model": "gpt-5.1-codex-mini"}`). |
+
+When the agentic evaluator runs, Codex executes the deterministic `eval_program_path` command, copies the resulting session log into `results/<task>/<timestamp>/agentic_eval_sessions/<uuid>/session_log.jsonl`, and stores the structured metrics in SQLite. Legacy mode keeps the original scheduler-based evaluation if you need strict reproducibility with older runs.
+
+### Agentic Backend Selection
+
+Shinka supports three agentic backends for code editing and evaluation:
+
+| Backend | CLI | Description |
+|---------|-----|-------------|
+| `codex` | Codex CLI | OpenAI's Codex-powered agent (default) |
+| `gemini` | Gemini CLI | Google's Gemini-powered agent |
+| `claude` | Claude Code | Anthropic's Claude-powered agent |
+
+Configure the backend via command line:
+```bash
+# Use Codex (default)
+shinka_launch variant=circle_packing_example +evo_config.agentic_mode=true
+
+# Use Gemini
+shinka_launch variant=circle_packing_example +evo_config.agentic_mode=true +evo_config.agentic.backend=gemini
+
+# Use Claude Code
+shinka_launch variant=circle_packing_example +evo_config.agentic_mode=true +evo_config.agentic.backend=claude
+```
+
+Or in a config file:
+```yaml
+evo_config:
+  agentic_mode: true
+  agentic:
+    backend: "claude"  # or "codex" or "gemini"
+    codex_profile: null  # Optional: Model alias (e.g., "sonnet", "opus" for Claude)
+    sandbox: "workspace-write"
+    approval_mode: "full-auto"
+    max_turns: 50
+    max_seconds: 0  # 0 = unlimited
+    extra_cli_config: {}
+```
+
+**Backend-specific notes:**
+
+- **Codex**: Requires Codex CLI (`codex`) to be installed and authenticated
+- **Gemini**: Requires Gemini CLI (`gemini`) to be installed and authenticated
+- **Claude**: Requires Claude Code CLI (`claude`) to be installed and authenticated via `claude login`
+
+Each backend uses the same event streaming interface internally, ensuring consistent behavior for session logging, telemetry, and WebUI integration regardless of which backend is selected.
 
 ### Database Parameters
 
@@ -311,6 +371,7 @@ evo_config:
     Focus on [specific optimization goals].
   language: "python"
   init_program_path: "examples/my_optimization/initial.py"
+  init_support_dir: "examples/my_optimization"
   job_type: "local"
 
 exp_name: "shinka_my_optimization"

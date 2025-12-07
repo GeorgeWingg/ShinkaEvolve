@@ -12,26 +12,43 @@ evo_config:
   max_parallel_jobs: 10
   max_patch_resamples: 3
   max_patch_attempts: 3
+  max_novelty_attempts: 2
   llm_models:
-    - "gemini-2.5-pro"
-    - "gemini-2.5-flash"
+    - "gpt-4.1"
     - "gpt-4.1-mini"
-    - "gpt-4.1-nano"
-    - "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
     - "o4-mini"
   llm_dynamic_selection: ucb
   llm_kwargs:
     temperatures:
-      - 0.0
       - 0.5
       - 1.0
     max_tokens: 16384
   meta_rec_interval: 10
-  meta_llm_models:
-    - "gpt-4.1"
+  meta_llm_models: null  # Disable Meta-LLM to avoid OpenAI API key conflicts (TODO-002)
   meta_llm_kwargs:
     temperatures:
       - 0.0
   embedding_model: "text-embedding-3-small"
   results_dir: ${output_dir}
-  
+  agentic:
+    _target_: shinka.core.runner.AgenticConfig
+    cli_profile: null
+    sandbox: "workspace-write"
+    approval_mode: "full-auto"
+    max_turns: 50
+    max_seconds: 0
+    cli_path: null
+    extra_cli_config: {}
+    resume_parent_session: false
+  evaluator:
+    _target_: shinka.core.runner.EvaluatorConfig
+    mode: auto
+    agentic:
+      _target_: shinka.core.runner.AgenticEvaluatorConfig
+      cli_profile: null
+      sandbox: "workspace-write"
+      approval_mode: "full-auto"
+      max_turns: 80
+      max_seconds: 0
+      cli_path: null
+      extra_cli_config: {}

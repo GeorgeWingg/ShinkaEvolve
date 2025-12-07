@@ -1,0 +1,40 @@
+evaluate_function:
+  _target_: examples.multifile_demo.evaluate.main
+  program_path: ???
+  results_dir: ???
+
+distributed_job_config:
+  _target_: shinka.launch.SlurmCondaJobConfig
+  modules:
+  - "cuda/12.4"
+  - "cudnn/8.9.7"
+  - "hpcx/2.20"
+  eval_program_path: "shinka/eval_hydra.py"
+  conda_env: "shinka"
+  time: "00:10:00"
+  cpus: 1
+  gpus: 0
+  mem: "8G"
+
+evo_config:
+  task_sys_msg: |
+    You are optimizing a multi-file Python project to maximize a score.
+
+    The project structure:
+    - main.py: Main entry point that calls optimization (contains run_optimization)
+    - utils.py: Utility functions (format_result, validate_input)
+    - math_ops.py: Math operations (compute_score, optimize_params)
+
+    The goal is to maximize the score from compute_score(x, y).
+    The optimal solution is at x=3, y=7 which gives score=1.0.
+    The current naive optimizer only achieves ~0.42.
+
+    You can modify any file to improve the optimization algorithm.
+    Consider: gradient descent, binary search, grid search with finer resolution, etc.
+
+  language: "python"
+  init_program_path: "examples/multifile_demo/initial.py"
+  init_support_dir: "examples/multifile_demo"
+  job_type: "local"
+
+exp_name: "shinka_multifile_demo"

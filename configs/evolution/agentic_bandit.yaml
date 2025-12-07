@@ -1,0 +1,39 @@
+# @package _global_
+#
+# Agentic evolution with bandit-based backend selection.
+# 
+# Usage:
+#   uv run shinka_launch evolution@_global_=agentic_bandit
+#
+# This enables Thompson Sampling / UCB for selecting between backends
+# (Gemini, Claude, ShinkaAgent) based on their mutation performance.
+#
+# ShinkaAgent is model-agnostic - set the model via extra_cli_config.model
+# Available models: gpt-4.1-mini, gpt-4.1, o3-mini, claude-3-5-sonnet, etc.
+# See shinka/llm/models/pricing.py for full list.
+
+defaults:
+  - agentic
+
+evo_config:
+  agentic:
+    # Default backend (used for evaluator and fallback)
+    backend: "gemini"
+    bandit_selection: true
+    # Model for ShinkaAgent backend (ignored by CLI backends)
+    extra_cli_config:
+      model: "gpt-4.1-mini"
+    bandit_kwargs:
+      exploration_coef: 1.0
+      epsilon: 0.1
+      auto_decay: 0.95
+      shift_by_baseline: true
+      asymmetric_scaling: true
+      # All three backends: gemini CLI, claude CLI, and ShinkaAgent
+      allowed_backends:
+        - gemini
+        - claude
+        - shinka
+  # Use legacy evaluator for reliability (agentic evaluator can be flaky)
+  evaluator:
+    mode: legacy

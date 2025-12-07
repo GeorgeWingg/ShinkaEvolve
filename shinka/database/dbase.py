@@ -154,6 +154,7 @@ class Program:
     public_metrics: Dict[str, Any] = field(default_factory=dict)
     private_metrics: Dict[str, Any] = field(default_factory=dict)
     text_feedback: Union[str, List[str]] = ""
+    human_rating: Optional[float] = None  # Rating (e.g. 1-5 stars)
     correct: bool = False  # Whether the program is functionally correct
     children_count: int = 0
 
@@ -368,6 +369,7 @@ class ProgramDatabase:
                 public_metrics TEXT, -- JSON serialized Dict[str, Any]
                 private_metrics TEXT, -- JSON serialized Dict[str, Any]
                 text_feedback TEXT, -- Text feedback for the program
+                human_rating REAL,  -- Human rating (1-5)
                 complexity REAL,   -- Calculated complexity metric
                 embedding TEXT,    -- JSON serialized List[float]
                 embedding_pca_2d TEXT, -- JSON serialized List[float]
@@ -441,9 +443,23 @@ class ProgramDatabase:
                 )
                 self.conn.commit()
                 logger.info("Successfully added text_feedback column")
+
         except sqlite3.Error as e:
             logger.error(f"Error during text_feedback migration: {e}")
-            # Don't raise - this is not critical for existing functionality
+
+        # Migration 2: Add human_rating column if it doesn't exist
+        try:
+            self.cursor.execute("PRAGMA table_info(programs)")
+            columns = [row[1] for row in self.cursor.fetchall()]
+
+            if "human_rating" not in columns:
+                logger.info("Adding human_rating column to programs table")
+                self.cursor.execute("ALTER TABLE programs ADD COLUMN human_rating REAL")
+                self.conn.commit()
+                logger.info("Successfully added human_rating column")
+        except sqlite3.Error as e:
+            logger.error(f"Error during human_rating migration: {e}")
+
 
     @db_retry()
     def _load_metadata_from_db(self):
@@ -588,10 +604,10 @@ class ProgramDatabase:
                    (id, code, language, parent_id, archive_inspiration_ids,
                     top_k_inspiration_ids, generation, timestamp, code_diff,
                     combined_score, public_metrics, private_metrics,
-                    text_feedback, complexity, embedding, embedding_pca_2d,
+                    text_feedback, human_rating, complexity, embedding, embedding_pca_2d,
                     embedding_pca_3d, embedding_cluster_id, correct,
                     children_count, metadata, island_idx, migration_history)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                            ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -608,6 +624,7 @@ class ProgramDatabase:
                     public_metrics_json,
                     private_metrics_json,
                     text_feedback_str,
+                    program.human_rating,
                     program.complexity,
                     embedding_json,  # Use serialized embedding
                     embedding_pca_2d_json,
@@ -725,6 +742,10 @@ class ProgramDatabase:
         # Handle text_feedback (simple string field)
         if "text_feedback" not in program_data or program_data["text_feedback"] is None:
             program_data["text_feedback"] = ""
+
+        # Handle human_rating
+        if "human_rating" not in program_data:
+            program_data["human_rating"] = None
 
         # Handle inspiration_ids
         archive_insp_ids_text = program_data.get("archive_inspiration_ids")

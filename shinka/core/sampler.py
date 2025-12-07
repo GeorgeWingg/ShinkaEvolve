@@ -13,6 +13,8 @@ from shinka.prompts import (
     CROSS_SYS_FORMAT,
     CROSS_ITER_MSG,
     get_cross_component,
+    AGENTIC_SYS_FORMAT,
+    AGENTIC_ITER_MSG,
 )
 from shinka.prompts.prompts_init import INIT_SYSTEM_MSG, INIT_USER_MSG
 import logging
@@ -21,6 +23,23 @@ logger = logging.getLogger(__name__)
 
 
 class PromptSampler:
+    """Generates prompts for program evolution.
+    
+    Note on task_sys_msg and prompt ownership:
+    
+    - In LEGACY (non-agentic) mode: task_sys_msg is used as the system prompt
+      base, with format-specific instructions appended. This preserves backward
+      compatibility with diff/full/cross patch types.
+    
+    - In AGENTIC mode: The harness (Codex/Gemini/Claude CLI) owns the system
+      prompt. task_sys_msg is placed in the USER prompt as "# Task Context"
+      section. The system_prompt sent to backends contains only operational
+      instructions (AGENTIC_SYS_FORMAT) - not task-specific guidance.
+      
+    This design ensures agentic runs respect each CLI's native system prompt
+    while still providing task context to the model via the user message.
+    """
+    
     def __init__(
         self,
         task_sys_msg: Optional[str] = None,
@@ -28,6 +47,7 @@ class PromptSampler:
         patch_types: Optional[List[str]] = None,
         patch_type_probs: Optional[List[float]] = None,
         use_text_feedback: bool = False,
+        agentic_mode: bool = False,
     ):
         if patch_types is None:
             patch_types = ["diff"]
@@ -46,6 +66,7 @@ class PromptSampler:
             )
         # Whether to use text feedback in the prompt
         self.use_text_feedback = use_text_feedback
+        self.agentic_mode = agentic_mode
 
     def initial_program_prompt(self) -> Tuple[str, str]:
         """Generate the prompt for the initial program."""
@@ -74,33 +95,44 @@ class PromptSampler:
         else:
             sys_msg = self.task_sys_msg
 
-        # Sample coding type
-        # Filter out crossover if no inspirations
-        if len(archive_inspirations) == 0 and len(top_k_inspirations) == 0:
-            valid_types = [t for t in self.patch_types if t != "cross"]
-            valid_probs = [
-                p
-                for t, p in zip(self.patch_types, self.patch_type_probs)
-                if t != "cross"
-            ]
-            # Renormalize probabilities
-            valid_probs = [p / sum(valid_probs) for p in valid_probs]
-            patch_type = np.random.choice(valid_types, p=valid_probs)
+        if self.agentic_mode:
+            patch_type = "agentic"
+            # DESIGN DECISION: In agentic mode, the harness (Codex/Gemini/Claude CLI)
+            # owns the system prompt. We do NOT inject task_sys_msg into the system
+            # prompt because:
+            # 1. CLI harnesses have their own system prompts we can't/shouldn't override
+            # 2. Task context (e.g., "best known result is 2.635") belongs in user prompt
+            # 3. Keeps clear separation: harness owns system behavior, Shinka owns task
+            # The task_sys_msg content is passed to AGENTIC_ITER_MSG as {task_context}.
+            sys_msg = AGENTIC_SYS_FORMAT
         else:
-            patch_type = np.random.choice(
-                self.patch_types,
-                p=self.patch_type_probs,
-            )
+            # Sample coding type
+            # Filter out crossover if no inspirations
+            if len(archive_inspirations) == 0 and len(top_k_inspirations) == 0:
+                valid_types = [t for t in self.patch_types if t != "cross"]
+                valid_probs = [
+                    p
+                    for t, p in zip(self.patch_types, self.patch_type_probs)
+                    if t != "cross"
+                ]
+                # Renormalize probabilities
+                valid_probs = [p / sum(valid_probs) for p in valid_probs]
+                patch_type = np.random.choice(valid_types, p=valid_probs)
+            else:
+                patch_type = np.random.choice(
+                    self.patch_types,
+                    p=self.patch_type_probs,
+                )
 
-        if patch_type == "diff":
-            sys_msg += DIFF_SYS_FORMAT
-        elif patch_type == "full":
-            # Randomly sample from different full rewrite variants
-            full_variant_idx = np.random.randint(0, len(FULL_SYS_FORMATS))
-            selected_format = FULL_SYS_FORMATS[full_variant_idx]
-            sys_msg += selected_format
-        elif patch_type == "cross":
-            sys_msg += CROSS_SYS_FORMAT
+            if patch_type == "diff":
+                sys_msg += DIFF_SYS_FORMAT
+            elif patch_type == "full":
+                # Randomly sample from different full rewrite variants
+                full_variant_idx = np.random.randint(0, len(FULL_SYS_FORMATS))
+                selected_format = FULL_SYS_FORMATS[full_variant_idx]
+                sys_msg += selected_format
+            elif patch_type == "cross":
+                sys_msg += CROSS_SYS_FORMAT
 
         if len(archive_inspirations) > 0:
             eval_history_msg = construct_eval_history_msg(
@@ -158,6 +190,20 @@ class PromptSampler:
                 archive_inspirations,
                 top_k_inspirations,
                 language=self.language,
+            )
+        elif patch_type == "agentic":
+            # Task context goes in user prompt for agentic mode (see comment above)
+            task_context = ""
+            if self.task_sys_msg:
+                task_context = f"# Task Context\n\n{self.task_sys_msg}\n"
+            iter_msg = AGENTIC_ITER_MSG.format(
+                task_context=task_context,
+                language=self.language,
+                code_content=parent.code,
+                performance_metrics=perf_str(
+                    parent.combined_score, parent.public_metrics
+                ),
+                text_feedback_section=text_feedback_section,
             )
         elif patch_type == "paper":
             raise NotImplementedError("Paper edit not implemented.")

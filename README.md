@@ -48,12 +48,35 @@ shinka_launch variant=circle_packing_example
 
 For detailed installation instructions and usage examples, see the [Getting Started Guide](docs/getting_started.md).
 
+### Agentic Codex Mode (beta)
+
+CodexEvolve replaces single-shot patches with a multi-turn agent that can edit multiple files, run formatters/tests, and stream telemetry to the WebUI.
+
+1. Install and authenticate the Codex CLI (`npm install -g @openai/codex && codex login`).
+2. Launch any variant with `+evo_config.agentic_mode=true` and let Codex iterate—by default we don’t impose runtime or approval limits:
+
+```bash
+shinka_launch variant=circle_packing_example +evo_config.agentic_mode=true
+```
+
+Each generation stores its Codex session under `results/<task>/<timestamp>/agent_sessions/<uuid>` and copies the entire sandbox snapshot into `gen_<n>/` before evaluation. Keep `shinka_visualize` open to inspect multi-file diffs, session logs, and evaluator status during long hill-climbing runs.
+
+> **Model tip:** When configuring Codex to use a non-OpenAI provider/profile, pick the `gpt-5.1-codex-mini` model so the prompts in this repo line up with the multi-turn editing behavior we test against.
+
+3. For multi-file tasks, set `evo_config.init_support_dir` so generation 0 copies every helper module next to `initial.py`. Subsequent agentic iterations inherit the full workspace automatically, so edits to helper modules persist just like `main.py`.
+
+4. **Agentic evaluator.** Set `evo_config.evaluator.mode=agentic` (the default when `agentic_mode=true`) to let a Codex judge run the deterministic evaluation script for each generation. The judge issues the same command you would run locally (e.g., `python shinka/eval_hydra.py --program_path ... --results_dir ...`), copies the structured result into the SQLite DB, and logs every command under `results/<task>/<timestamp>/agentic_eval_sessions/<uuid>/session_log.jsonl`. Override with `evo_config.evaluator.mode=legacy` whenever you need the previous scheduler-based path.
+
+#### Session Context Control
+
+Codex nodes default to fresh conversations. When you want the next generation to inherit the previous node’s full Codex reasoning state (plans, TODOs, approved commands), launch with `+evo_config.agentic.resume_parent_session=true`. This makes the editor call `codex exec resume <SESSION_ID>` under the hood, so only the filesystem diverges while the conversation history stays intact. Leave the flag `false` to force clean branches or sweep across both options with Hydra overrides.
+
 ## Examples 📖
 
 | Example | Description | Environment Setup |
 |---------|-------------|-------------------|
-| ⭕ [Circle Packing](examples/circle_packing) | Optimize circle packing to maximize radii. | `LocalJobConfig` |
-| 🤖 [Agent Design](examples/adas_aime) | Design agent scaffolds for math tasks. | `LocalJobConfig` |
+| ⭕ [Circle Packing](examples/circle_packing) | Optimize circle packing to maximize radii. The shipped `circle26_solution.npz` seeds generation 0 with a curated arrangement (~2.626 sum of radii) so Codex/LLMs only need to close the remaining gap to the 2.636 benchmark. | `LocalJobConfig` |
+| 🤖 [Agent Design](examples/agent_design) | Design agent scaffolds for math tasks. | `LocalJobConfig` |
 | 🎯 [ALE-Bench](examples/ale_bench) | Code optimization for ALE-Bench tasks. | `LocalJobConfig` |
 | ✨ [Novelty Generator](examples/novelty_generator) | Generate creative, surprising outputs (e.g., ASCII art). | `LocalJobConfig` |
 

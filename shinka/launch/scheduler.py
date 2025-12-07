@@ -1,6 +1,7 @@
 import logging
 import time
 import asyncio
+import sys
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict, Any, Tuple, Union, List
 from concurrent.futures import ThreadPoolExecutor
@@ -129,7 +130,7 @@ class JobScheduler:
                 ]
             else:
                 cmd = [
-                    "python",
+                    sys.executable,
                     f"{self.config.eval_program_path}",
                     "--program_path",
                     f"{exec_fname_t}",

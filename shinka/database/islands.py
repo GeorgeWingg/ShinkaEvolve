@@ -478,8 +478,10 @@ class ElitistMigrationStrategy(IslandMigrationStrategy):
                         score_str = f"{score:.3f}" if score is not None else "N/A"
 
                         # Get patch info from metadata
-                        patch_name = metadata.get("patch_name", "N/A")
-                        patch_type = metadata.get("patch_type", "N/A")
+                        patch_name = metadata.get("patch_name") or "N/A"
+                        if patch_name != "N/A" and len(patch_name) > 28:
+                            patch_name = patch_name[:28]
+                        patch_type = metadata.get("patch_type") or "N/A"
 
                         table.add_row(
                             f"I{source}",
@@ -488,7 +490,7 @@ class ElitistMigrationStrategy(IslandMigrationStrategy):
                             f"{generation}",
                             score_str,
                             str(children),
-                            (patch_name[:28] if patch_name != "N/A" else "N/A"),
+                            patch_name,
                             patch_type,
                             f"{complexity:.1f}" if complexity else "N/A",
                         )

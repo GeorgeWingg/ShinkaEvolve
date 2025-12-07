@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 
 from shinka.database import DatabaseConfig, ProgramDatabase
+from shinka.tools.codex_session_registry import list_session_processes
 
 # We'll use a simple text-to-PDF approach instead of complex dependencies
 WEASYPRINT_AVAILABLE = False
@@ -75,12 +76,1034 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             generation = query["generation"][0]
             return self.handle_download_meta_pdf(db_path, generation)
 
+        if path == "/api/backend_bandit":
+            return self.handle_backend_bandit_status()
+
+        if path == "/api/gemini_status":
+            return self.handle_gemini_status()
+
+        if path == "/api/claude_status":
+            return self.handle_claude_status()
+
+        if path == "/api/codex_usage":
+            return self.handle_codex_usage()
+
+        if path == "/api/credentials":
+            return self.handle_credentials_get()
+
+        if path == "/api/evolution_runs":
+            return self.handle_evolution_runs()
+
+        if path == "/api/active_jobs" and "db_path" in query:
+            return self.handle_active_jobs(query)
+
+        if path == "/api/session_state" and "session_id" in query:
+            return self.handle_session_state(query)
+
         if path == "/":
             print("[SERVER] Root path requested, serving viz_tree.html")
             self.path = "/viz_tree.html"
 
         # Serve static files from the webui directory
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_POST(self):
+        """Handle POST requests."""
+        print(f"\n[SERVER] Received POST request for: {self.path}")
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+
+        if path == "/api/evolution_run/delete":
+            return self.handle_evolution_run_delete()
+
+        if path == "/api/credentials":
+            return self.handle_credentials_post()
+
+        # Return 404 for unknown POST endpoints
+        self.send_error(404, f"Unknown POST endpoint: {path}")
+
+    def handle_evolution_run_delete(self):
+        """Delete an evolution run directory."""
+        import shutil
+
+        try:
+            # Read the request body
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+
+            run_id = data.get("run_id")
+            run_dir = data.get("run_dir")
+
+            print(f"[SERVER] Delete request for run_id={run_id}, run_dir={run_dir}")
+
+            if not run_dir:
+                self.send_json_response({"ok": False, "error": "No run_dir provided"})
+                return
+
+            # Resolve the path and validate it's under search_root
+            run_path = os.path.abspath(run_dir)
+            search_root = os.path.abspath(self.search_root)
+
+            # Security check: ensure the path is under search_root/results
+            if not run_path.startswith(search_root):
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Path is outside the allowed directory"
+                })
+                return
+
+            # Check if the directory exists
+            if not os.path.isdir(run_path):
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Directory not found: {run_path}"
+                })
+                return
+
+            # Check if there's a shinka.pid indicating an active run
+            pid_file = os.path.join(run_path, "shinka.pid")
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, "r") as f:
+                        pid = int(f.read().strip())
+                    # Check if process is still running
+                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                    self.send_json_response({
+                        "ok": False,
+                        "error": f"Cannot delete: run is still active (PID {pid})"
+                    })
+                    return
+                except (ValueError, ProcessLookupError, PermissionError):
+                    # PID file is stale or process is not running
+                    pass
+
+            # Delete the directory
+            print(f"[SERVER] Deleting directory: {run_path}")
+            shutil.rmtree(run_path)
+
+            self.send_json_response({"ok": True})
+            print(f"[SERVER] Successfully deleted: {run_path}")
+
+        except json.JSONDecodeError as e:
+            self.send_json_response({"ok": False, "error": f"Invalid JSON: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error deleting run: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_backend_bandit_status(self):
+        """Return backend auth status and bandit summary (if available)."""
+        print("[SERVER] Received request for backend bandit status")
+        try:
+            from shinka.tools.auth_status import get_authenticated_backends_summary
+            summary = get_authenticated_backends_summary()
+            response = {
+                "available_backends": summary.get("available", []),
+                "unavailable_backends": summary.get("unavailable", []),
+                "backends": summary.get("details", {}),
+                "bandit_active": False,  # Static endpoint; runner would set this
+            }
+            self.send_json_response(response)
+        except Exception as e:
+            print(f"[SERVER] Error getting backend bandit status: {e}")
+            self.send_json_response({
+                "available_backends": [],
+                "unavailable_backends": ["codex", "gemini", "claude", "shinka"],
+                "backends": {},
+                "bandit_active": False,
+                "error": str(e),
+            })
+
+    def handle_gemini_status(self):
+        """Return Gemini CLI auth status."""
+        print("[SERVER] Received request for Gemini status")
+        try:
+            from shinka.tools.auth_status import check_gemini_auth
+            status = check_gemini_auth()
+            self.send_json_response({
+                "available": status.cli_path is not None,
+                "authenticated": status.available,
+                "plan": status.plan,
+                "error": status.error,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error getting Gemini status: {e}")
+            self.send_json_response({
+                "available": False,
+                "authenticated": False,
+                "error": str(e),
+            })
+
+    def handle_claude_status(self):
+        """Return Claude CLI auth status."""
+        print("[SERVER] Received request for Claude status")
+        try:
+            from shinka.tools.auth_status import check_claude_auth
+            status = check_claude_auth()
+            self.send_json_response({
+                "available": status.cli_path is not None,
+                "authenticated": status.available,
+                "plan": status.plan,
+                "error": status.error,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error getting Claude status: {e}")
+            self.send_json_response({
+                "available": False,
+                "authenticated": False,
+                "error": str(e),
+            })
+
+    def handle_codex_usage(self):
+        """Return Codex usage and auth status."""
+        print("[SERVER] Received request for Codex usage")
+        try:
+            from shinka.tools.codex_usage import collect_usage, CodexUsageError
+            from shinka.tools.auth_status import check_codex_auth
+            
+            # First check auth status
+            auth_status = check_codex_auth()
+            if not auth_status.available:
+                self.send_json_response({
+                    "authenticated": False,
+                    "error": auth_status.error or "Not authenticated",
+                })
+                return
+            
+            # Try to get usage data
+            try:
+                usage = collect_usage()
+                self.send_json_response({
+                    "authenticated": True,
+                    "plan": usage.plan,
+                    "email": usage.email,
+                    "windows": [
+                        {
+                            "label": w.label,
+                            "percent_used": w.percent_used,
+                            "window_minutes": w.window_minutes,
+                            "reset_at": w.reset_at,
+                            "reset_at_local": w.reset_at_local,
+                        }
+                        for w in usage.windows
+                    ],
+                })
+            except CodexUsageError as e:
+                # Auth file exists but usage fetch failed
+                self.send_json_response({
+                    "authenticated": True,
+                    "plan": auth_status.plan,
+                    "error": str(e),
+                    "windows": [],
+                })
+        except Exception as e:
+            print(f"[SERVER] Error getting Codex usage: {e}")
+            self.send_json_response({
+                "authenticated": False,
+                "error": str(e),
+            })
+
+    def handle_credentials_get(self):
+        """Return list of configured providers and their status (no actual keys exposed)."""
+        print("[SERVER] Received GET request for credentials status")
+        try:
+            from shinka.tools.credentials import (
+                load_credentials_store,
+                get_api_key,
+                ENV_VAR_MAP,
+            )
+            
+            # Map frontend provider names to backend provider names
+            FRONTEND_TO_BACKEND = {
+                "openai": "codex",
+                "anthropic": "claude",
+                "google": "gemini",
+                "deepseek": "deepseek",
+                "openrouter": "openrouter",
+                "azure": "azure",
+            }
+            
+            # Additional env vars for providers not in credentials.py
+            EXTRA_ENV_VARS = {
+                "deepseek": "DEEPSEEK_API_KEY",
+                "openrouter": "OPENROUTER_API_KEY",
+                "azure": "AZURE_OPENAI_API_KEY",
+            }
+            
+            store = load_credentials_store()
+            providers_status = {}
+            
+            # Check each provider
+            for frontend_name, backend_name in FRONTEND_TO_BACKEND.items():
+                has_key = False
+                source = None
+                
+                # Check credential store
+                if backend_name in store and store[backend_name]:
+                    has_key = True
+                    source = "store"
+                else:
+                    # Check env vars
+                    env_var = ENV_VAR_MAP.get(backend_name) or EXTRA_ENV_VARS.get(backend_name)
+                    if env_var and os.environ.get(env_var):
+                        has_key = True
+                        source = "env"
+                
+                providers_status[frontend_name] = {
+                    "configured": has_key,
+                    "source": source,
+                }
+            
+            self.send_json_response({
+                "ok": True,
+                "providers": providers_status,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error getting credentials status: {e}")
+            self.send_json_response({
+                "ok": False,
+                "error": str(e),
+            })
+
+    def handle_credentials_post(self):
+        """Save or delete an API key to the credential store."""
+        print("[SERVER] Received POST request to save credentials")
+        try:
+            from shinka.tools.credentials import set_api_key, remove_api_key
+            
+            # Map frontend provider names to backend provider names
+            FRONTEND_TO_BACKEND = {
+                "openai": "codex",
+                "anthropic": "claude", 
+                "google": "gemini",
+                "deepseek": "deepseek",
+                "openrouter": "openrouter",
+                "azure": "azure",
+            }
+            
+            # Read the request body
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+            
+            provider = data.get("provider", "").lower()
+            api_key = data.get("api_key", "")
+            action = data.get("action", "set")  # "set" or "delete"
+            
+            if not provider:
+                self.send_json_response({"ok": False, "error": "No provider specified"})
+                return
+            
+            # Map frontend name to backend name
+            backend_provider = FRONTEND_TO_BACKEND.get(provider, provider)
+            
+            if action == "delete":
+                remove_api_key(backend_provider)
+                print(f"[SERVER] Removed API key for provider: {backend_provider}")
+                self.send_json_response({"ok": True, "action": "deleted"})
+            else:
+                if not api_key:
+                    self.send_json_response({"ok": False, "error": "No API key provided"})
+                    return
+                    
+                set_api_key(backend_provider, api_key)
+                print(f"[SERVER] Saved API key for provider: {backend_provider}")
+                
+                # Also set it in the environment for immediate use
+                # This ensures ShinkaAgent can see it without restart
+                env_var_map = {
+                    "codex": "OPENAI_API_KEY",
+                    "gemini": "GEMINI_API_KEY", 
+                    "claude": "ANTHROPIC_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY",
+                    "openrouter": "OPENROUTER_API_KEY",
+                    "azure": "AZURE_OPENAI_API_KEY",
+                }
+                env_var = env_var_map.get(backend_provider)
+                if env_var:
+                    os.environ[env_var] = api_key
+                    print(f"[SERVER] Also set {env_var} in environment")
+                
+                self.send_json_response({"ok": True, "action": "saved"})
+                
+        except json.JSONDecodeError as e:
+            self.send_json_response({"ok": False, "error": f"Invalid JSON: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error saving credentials: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_evolution_runs(self):
+        """Return list of evolution runs by scanning the results directory."""
+        print("[SERVER] Received request for evolution runs")
+        try:
+            runs = []
+            now = time.time()
+            
+            # Scan search_root for task directories, then run directories inside each
+            # Structure: search_root/<task>/<run>/evolution_db.sqlite
+            if os.path.exists(self.search_root):
+                for task_name in os.listdir(self.search_root):
+                    task_dir = os.path.join(self.search_root, task_name)
+                    if not os.path.isdir(task_dir):
+                        continue
+                    
+                    # Scan each task directory for run directories
+                    for run_name in os.listdir(task_dir):
+                        run_dir = os.path.join(task_dir, run_name)
+                        if not os.path.isdir(run_dir):
+                            continue
+                        
+                        db_path = os.path.join(run_dir, "evolution_db.sqlite")
+                        if not os.path.exists(db_path):
+                            continue
+                        
+                        # This is a valid run directory
+                        run_info = {
+                            "run_id": run_name,
+                            "run_name": run_name,
+                            "run_dir": run_dir,
+                            "task": task_name,
+                            "status": "completed",
+                            "agent_type": "Unknown",
+                            "generations": 0,
+                            "start_time": None,
+                            "duration": None,
+                            "pid": None,
+                        }
+                        
+                        # Check if there's a PID file indicating a running process
+                        pid_path = os.path.join(run_dir, "shinka.pid")
+                        if os.path.exists(pid_path):
+                            try:
+                                with open(pid_path, 'r') as f:
+                                    pid = int(f.read().strip())
+                                    run_info["pid"] = pid
+                                    
+                                    # Check if process is still running
+                                    try:
+                                        os.kill(pid, 0)  # Signal 0 just checks if process exists
+                                        run_info["status"] = "running"
+                                    except (OSError, ProcessLookupError):
+                                        # Process is not running
+                                        pass
+                            except (ValueError, IOError):
+                                pass
+                        
+                        # Get generation count and agent type from database
+                        try:
+                            conn = sqlite3.connect(db_path)
+                            cursor = conn.cursor()
+                            
+                            # Get max generation
+                            cursor.execute("SELECT MAX(generation) FROM programs")
+                            max_gen = cursor.fetchone()[0]
+                            if max_gen is not None:
+                                run_info["generations"] = max_gen + 1
+                            
+                            # Try to get agent type from metadata of a non-gen-0 program
+                            cursor.execute("""
+                                SELECT metadata FROM programs 
+                                WHERE generation > 0 AND metadata IS NOT NULL 
+                                LIMIT 1
+                            """)
+                            row = cursor.fetchone()
+                            if row and row[0]:
+                                try:
+                                    meta = json.loads(row[0])
+                                    backend = meta.get("agent_backend") or meta.get("patch_type", "Unknown")
+                                    run_info["agent_type"] = backend
+                                except:
+                                    pass
+                            
+                            conn.close()
+                        except Exception as e:
+                            print(f"[SERVER] Error reading DB {db_path}: {e}")
+                        
+                        # Get start time from directory mtime or hydra config
+                        try:
+                            hydra_config = os.path.join(run_dir, ".hydra", "config.yaml")
+                            if os.path.exists(hydra_config):
+                                run_info["start_time"] = os.path.getmtime(hydra_config)
+                            else:
+                                run_info["start_time"] = os.path.getmtime(run_dir)
+                        except:
+                            pass
+                        
+                        # Calculate duration
+                        if run_info["start_time"]:
+                            if run_info["status"] == "running":
+                                # Live duration
+                                elapsed = now - run_info["start_time"]
+                            else:
+                                # Use last modification time of db
+                                try:
+                                    db_mtime = os.path.getmtime(db_path)
+                                    elapsed = db_mtime - run_info["start_time"]
+                                except:
+                                    elapsed = 0
+                            
+                            hrs = int(elapsed // 3600)
+                            mins = int((elapsed % 3600) // 60)
+                            if hrs > 0:
+                                run_info["duration"] = f"{hrs}h {mins}m"
+                            else:
+                                run_info["duration"] = f"{mins}m"
+                        
+                        # For running jobs, also get active sessions
+                        if run_info["status"] == "running":
+                            run_info["active_sessions"] = self._get_active_sessions_for_run(run_dir, now)
+                        else:
+                            run_info["active_sessions"] = []
+                        
+                        runs.append(run_info)
+            
+            # Sort by start time, newest first
+            runs.sort(key=lambda r: r.get("start_time") or 0, reverse=True)
+            
+            print(f"[SERVER] Found {len(runs)} evolution runs")
+            self.send_json_response({"runs": runs})
+            
+        except Exception as e:
+            print(f"[SERVER] Error listing evolution runs: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"runs": [], "error": str(e)})
+
+    def handle_active_jobs(self, query: Dict[str, Any]):
+        """Return list of currently active/in-progress evolution jobs.
+        
+        Uses the session registry with PID-based verification for 100% accuracy.
+        A job is active if and only if its CLI process is still running.
+        """
+        db_path = query.get("db_path", [""])[0]
+        if not db_path:
+            return self.send_json_response({"jobs": []})
+
+        try:
+            # Get the actual db path relative to search root
+            actual_db_path = self._get_actual_db_path(db_path)
+            run_dir = os.path.dirname(os.path.join(self.search_root, actual_db_path))
+            run_dir_normalized = os.path.normpath(run_dir)
+
+            active_jobs = []
+            now = time.time()
+
+            # PRIMARY SOURCE: Session registry with PID-based verification
+            # list_session_processes() already verifies PIDs are alive and cleans up dead entries
+            registry_sessions = list_session_processes()
+            
+            for session in registry_sessions:
+                workdir = session.get("workdir", "")
+                # Check if this session belongs to the requested run
+                # The workdir could be in /tmp/shinka_scratch/uuid or in run_dir/agent_sessions/uuid
+                results_dir = session.get("results_dir")  # Try registry first
+                session_path = Path(workdir)
+                
+                # Fallback: Try to find results_dir from session_meta.json in the workdir
+                if not results_dir:
+                    meta_path = session_path / "session_meta.json"
+                    if meta_path.exists():
+                        try:
+                            with open(meta_path, 'r') as mf:
+                                meta = json.load(mf)
+                                results_dir = meta.get("results_dir", "")
+                        except Exception:
+                            pass
+                
+                # Match session to this run
+                belongs_to_run = False
+                if results_dir:
+                    # Normalize the results_dir (resolve relative to workspace root)
+                    if os.path.isabs(results_dir):
+                        results_dir_abs = os.path.normpath(results_dir)
+                    else:
+                        # The session's results_dir is relative to workspace root,
+                        # but self.search_root might already include part of the path.
+                        # Find the workspace root by going up from search_root
+                        workspace_root = os.path.dirname(self.search_root)
+                        if os.path.basename(self.search_root) == "results":
+                            # search_root is the 'results' directory
+                            results_dir_abs = os.path.normpath(os.path.join(workspace_root, results_dir))
+                        else:
+                            results_dir_abs = os.path.normpath(os.path.join(self.search_root, results_dir))
+                    
+                    if results_dir_abs == run_dir_normalized:
+                        belongs_to_run = True
+                elif run_dir_normalized in workdir:
+                    # Fallback: workdir contains the run_dir path
+                    belongs_to_run = True
+                
+                if belongs_to_run:
+                    session_kind = session.get("session_kind", "unknown")
+                    session_type = "eval" if "eval" in session_kind.lower() else "edit"
+                    
+                    active_jobs.append({
+                        "session_id": os.path.basename(workdir),
+                        "session_type": session_type,
+                        "phase": session_type,
+                        "pid": session.get("pid"),
+                        "started_at": session.get("started_at", 0),
+                        "parent_id": session.get("parent_id"),
+                        "generation": session.get("generation"),
+                        "patch_type": session.get("patch_type"),
+                        "status": session.get("status", "running"),
+                        "can_stop": session.get("can_stop", False),
+                        "scratch_path": workdir if "/tmp/shinka_scratch" in workdir else None,
+                    })
+
+            if active_jobs:
+                print(f"[SERVER] Found {len(active_jobs)} active jobs (PID-verified)")
+            
+            self.send_json_response({"jobs": active_jobs})
+        except Exception as e:
+            print(f"[SERVER] Error getting active jobs: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"jobs": [], "error": str(e)})
+
+    def handle_session_state(self, query: Dict[str, Any]):
+        """Return current state of an active session for in-progress node display.
+        
+        This endpoint reads session_meta.json and session_log.jsonl to provide
+        the same data structure expected by the UI tabs (LLM Result, Evaluation, etc.)
+        """
+        session_id = query.get("session_id", [""])[0]
+        if not session_id:
+            return self.send_json_response({"error": "No session_id provided"})
+
+        try:
+            # Get active sessions from registry
+            registry_sessions = list_session_processes()
+            
+            # Find the session by ID - check multiple possible matches:
+            # 1. The workdir basename (UUID) matches session_id
+            # 2. The session_id field in registry matches
+            # 3. The workdir path ends with session_id
+            session_info = None
+            for session in registry_sessions:
+                workdir = session.get("workdir", "")
+                reg_session_id = session.get("session_id", "")
+                workdir_basename = os.path.basename(workdir)
+                
+                if (workdir_basename == session_id or 
+                    reg_session_id == session_id or 
+                    workdir.endswith(session_id)):
+                    session_info = session
+                    break
+            
+            if not session_info:
+                return self.send_json_response({
+                    "error": "Session not found",
+                    "status": "not_found"
+                })
+            
+            workdir = session_info.get("workdir", "")
+            meta_path = os.path.join(workdir, "session_meta.json")
+            log_path = os.path.join(workdir, "session_log.jsonl")
+            
+            # Read session metadata
+            meta = {}
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    meta = json.load(f)
+            
+            # Merge registry info with meta
+            meta.update({
+                "pid": session_info.get("pid"),
+                "status": session_info.get("status", "running"),
+                "started_at": session_info.get("started_at"),
+                "session_kind": session_info.get("session_kind"),
+            })
+            
+            # Read session events from log
+            events = []
+            if os.path.exists(log_path):
+                with open(log_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                events.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+            
+            # Parse events into structured data for UI tabs
+            parsed = self._parse_session_events(events)
+            
+            self.send_json_response({
+                "meta": meta,
+                "events": events,
+                "parsed": parsed,
+                "status": "running",
+            })
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e), "status": "error"})
+
+    def _parse_session_events(self, events: list) -> dict:
+        """Parse session events into structured data for UI display.
+        
+        Returns a dict with:
+        - timeline: List of events for the LLM Result tab (agentic timeline)
+        - commands: List of command executions
+        - messages: List of agent messages
+        - usage: Token usage statistics
+        """
+        timeline = []
+        commands = []
+        messages = []
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost_usd": 0}
+        session_id = None
+        model = None
+        
+        for event in events:
+            event_type = event.get("type")
+            
+            if event_type == "init":
+                session_id = event.get("session_id")
+                model = event.get("model")
+                timeline.append({
+                    "type": "init",
+                    "timestamp": event.get("timestamp"),
+                    "model": model,
+                    "session_id": session_id,
+                })
+            
+            elif event_type == "tool_use":
+                timeline.append({
+                    "type": "tool_use",
+                    "timestamp": event.get("timestamp"),
+                    "tool_name": event.get("tool_name"),
+                    "tool_id": event.get("tool_id"),
+                    "parameters": event.get("parameters", {}),
+                })
+            
+            elif event_type == "command_execution":
+                item = event.get("item", {})
+                cmd_info = {
+                    "command": item.get("command"),
+                    "status": item.get("status"),
+                    "exit_code": item.get("exit_code"),
+                    "stdout": item.get("stdout", ""),
+                    "stderr": item.get("stderr", ""),
+                }
+                commands.append(cmd_info)
+                timeline.append({
+                    "type": "command_result",
+                    "timestamp": event.get("timestamp"),
+                    **cmd_info,
+                })
+            
+            elif event_type == "agent_message":
+                item = event.get("item", {})
+                text = item.get("text", "")
+                messages.append(text)
+                timeline.append({
+                    "type": "message",
+                    "timestamp": event.get("timestamp"),
+                    "text": text,
+                })
+            
+            elif event_type == "usage":
+                usage_data = event.get("usage", {})
+                usage["input_tokens"] += usage_data.get("input_tokens", 0)
+                usage["output_tokens"] += usage_data.get("output_tokens", 0)
+                usage["total_tokens"] += usage_data.get("total_tokens", 0)
+                usage["total_cost_usd"] += usage_data.get("total_cost_usd", 0)
+        
+        return {
+            "timeline": timeline,
+            "commands": commands,
+            "messages": messages,
+            "usage": usage,
+            "session_id": session_id,
+            "model": model,
+        }
+
+    def _get_active_sessions_for_run(self, run_dir: str, now: float) -> list:
+        """Get list of active sessions for a specific run directory."""
+        active_sessions = []
+        tracked_job_ids = set()
+        run_dir_abs = os.path.abspath(run_dir)
+        
+        # PRIMARY SOURCE: Session registry (uses PID-based liveness checking)
+        # This is the most reliable source for detecting active sessions
+        try:
+            registry_sessions = list_session_processes()
+            for session in registry_sessions:
+                results_dir = session.get("results_dir", "")
+                if not results_dir:
+                    continue
+                
+                # Check if this session belongs to this run
+                # Handle both relative and absolute paths
+                results_dir_abs = os.path.abspath(results_dir)
+                matches = (
+                    results_dir_abs == run_dir_abs or
+                    run_dir_abs.endswith(results_dir.lstrip('./'))
+                )
+                
+                if matches:
+                    session_id = session.get("session_id", "")
+                    workdir = session.get("workdir", "")
+                    # Extract UUID from workdir path (only if it's a scratch directory)
+                    workdir_session_id = ""
+                    if workdir and "/shinka_scratch/" in workdir:
+                        workdir_session_id = os.path.basename(workdir)
+                    generation = session.get("generation")
+                    
+                    # Use session_id from registry, or fall back to workdir UUID
+                    final_session_id = session_id or workdir_session_id or str(session.get("pid", ""))
+                    
+                    session_info = {
+                        "session_id": final_session_id,
+                        "workdir_session_id": workdir_session_id,  # UUID from workdir path
+                        "session_type": session.get("session_kind", "edit"),
+                        "generation": generation,
+                        "parent_id": session.get("parent_id"),
+                        "patch_type": session.get("patch_type"),
+                        "pid": session.get("pid"),
+                        "started_at": session.get("started_at"),
+                        "age_seconds": int(now - session.get("started_at", now)) if session.get("started_at") else 0,
+                        "current_action": f"Running Gen {generation} (agentic)" if generation is not None else "Evaluating...",
+                    }
+                    
+                    # Try to get more specific action from the session log
+                    if workdir:
+                        log_path = os.path.join(workdir, "session_log.jsonl")
+                        if os.path.exists(log_path):
+                            try:
+                                with open(log_path, 'r') as lf:
+                                    lines = lf.readlines()
+                                    if lines:
+                                        last_line = lines[-1].strip()
+                                        if last_line:
+                                            event = json.loads(last_line)
+                                            event_type = event.get("type", "")
+                                            if event_type == "tool_use":
+                                                tool_name = event.get("tool_name", "tool")
+                                                session_info["current_action"] = f"Using {tool_name}"
+                                            elif event_type == "assistant":
+                                                session_info["current_action"] = "Thinking..."
+                                            elif event_type in ("command", "command_execution"):
+                                                item = event.get("item", {})
+                                                cmd = item.get("command", event.get("command", ""))[:30]
+                                                session_info["current_action"] = f"Running: {cmd}..." if cmd else f"Running Gen {generation}"
+                            except:
+                                pass
+                    
+                    active_sessions.append(session_info)
+                    tracked_job_ids.add(session_id)
+                    tracked_job_ids.add(workdir_session_id)
+        except Exception as e:
+            print(f"[SERVER] Error reading session registry: {e}")
+        
+        # SECONDARY SOURCE: Check active_jobs.json (maintained by launcher)
+        active_jobs_path = os.path.join(run_dir, "active_jobs.json")
+        if os.path.exists(active_jobs_path):
+            try:
+                with open(active_jobs_path, 'r') as f:
+                    active_jobs = json.load(f)
+                    for job in active_jobs:
+                        job_id = job.get("job_id", "")
+                        generation = job.get("generation")
+                        parent_id = job.get("parent_id")
+                        start_time = job.get("start_time", 0)
+                        
+                        # Determine session type from job_id
+                        if "eval" in job_id.lower():
+                            session_type = "eval"
+                        else:
+                            session_type = "edit"
+                        
+                        session_info = {
+                            "session_id": job_id,
+                            "session_type": session_type,
+                            "generation": generation,
+                            "parent_id": parent_id,
+                            "start_time": start_time,
+                            "age_seconds": int(now - start_time) if start_time else 0,
+                            "current_action": f"Running Gen {generation} (agentic)",
+                        }
+                        active_sessions.append(session_info)
+                        tracked_job_ids.add(job_id)
+            except Exception as e:
+                print(f"[SERVER] Error reading active_jobs.json: {e}")
+        
+        # SECONDARY SOURCE: Scan for recently modified session logs
+        # This is a FALLBACK for sessions not tracked in the registry (e.g., legacy runs).
+        # Note: Time-based detection is unreliable for long-running sessions that block
+        # on slow commands - prefer the PID-based registry check above.
+        # Use different time windows: edit sessions can be long, eval sessions are quicker
+        session_dirs = [
+            (os.path.join(run_dir, "agent_sessions"), "edit", 120),  # 2 min window
+            (os.path.join(run_dir, "agentic_eval_sessions"), "eval", 90),  # 1.5 min window
+        ]
+        
+        for sessions_dir, session_type, time_window in session_dirs:
+            if not os.path.exists(sessions_dir):
+                continue
+            
+            try:
+                for session_id in os.listdir(sessions_dir):
+                    # Skip if already tracked via active_jobs.json
+                    if session_id in tracked_job_ids:
+                        continue
+                    
+                    session_path = os.path.join(sessions_dir, session_id)
+                    if not os.path.isdir(session_path):
+                        continue
+                    
+                    log_path = os.path.join(session_path, "session_log.jsonl")
+                    if not os.path.exists(log_path):
+                        continue
+                    
+                    try:
+                        stat = os.stat(log_path)
+                        # Check if modified within the time window for this session type
+                        if now - stat.st_mtime < time_window:
+                            session_info = {
+                                "session_id": session_id,
+                                "session_type": session_type,
+                                "last_modified": stat.st_mtime,
+                                "age_seconds": int(now - stat.st_mtime),
+                            }
+                            
+                            # Try to get metadata
+                            meta_path = os.path.join(session_path, "session_meta.json")
+                            if os.path.exists(meta_path):
+                                try:
+                                    with open(meta_path, 'r') as mf:
+                                        meta = json.load(mf)
+                                        session_info["generation"] = meta.get("generation")
+                                        session_info["parent_id"] = meta.get("parent_id")
+                                        session_info["patch_type"] = meta.get("patch_type")
+                                        session_info["backend"] = meta.get("backend")
+                                except:
+                                    pass
+                            
+                            # Get last few events from log
+                            try:
+                                with open(log_path, 'r') as lf:
+                                    lines = lf.readlines()
+                                    if lines:
+                                        last_line = lines[-1].strip()
+                                        if last_line:
+                                            event = json.loads(last_line)
+                                            session_info["last_event_type"] = event.get("type", "unknown")
+                                            # Get a brief summary of what's happening
+                                            event_type = event.get("type", "")
+                                            if event_type == "tool_use":
+                                                tool = event.get("tool", {})
+                                                session_info["current_action"] = f"Using {tool.get('name', 'tool')}"
+                                            elif event_type == "assistant":
+                                                session_info["current_action"] = "Thinking..."
+                                            elif event_type in ("command", "command_execution"):
+                                                item = event.get("item", {})
+                                                cmd = item.get("command", event.get("command", ""))[:30]
+                                                session_info["current_action"] = f"Running: {cmd}..." if cmd else "Running command..."
+                                            elif event_type == "agent_message":
+                                                # For eval sessions, show evaluating status
+                                                if session_type == "eval":
+                                                    session_info["current_action"] = "Evaluating..."
+                                                else:
+                                                    session_info["current_action"] = "Generating..."
+                                            else:
+                                                # Default based on session type
+                                                if session_type == "eval":
+                                                    session_info["current_action"] = "Evaluating..."
+                                                else:
+                                                    session_info["current_action"] = event_type or "Working..."
+                            except:
+                                # Default action based on session type
+                                if session_type == "eval":
+                                    session_info["current_action"] = "Evaluating..."
+                                else:
+                                    session_info["current_action"] = "Working..."
+                            
+                            active_sessions.append(session_info)
+                            tracked_job_ids.add(session_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        
+        # Also check /tmp/shinka_scratch for sessions that belong to this run
+        scratch_dir = "/tmp/shinka_scratch"
+        if os.path.exists(scratch_dir):
+            try:
+                for session_id in os.listdir(scratch_dir):
+                    session_path = os.path.join(scratch_dir, session_id)
+                    if not os.path.isdir(session_path):
+                        continue
+                    
+                    meta_path = os.path.join(session_path, "session_meta.json")
+                    if os.path.exists(meta_path):
+                        try:
+                            with open(meta_path, 'r') as mf:
+                                meta = json.load(mf)
+                                results_dir = meta.get("results_dir", "")
+                                # Check if this session belongs to this run
+                                # Handle both relative and absolute paths
+                                if results_dir:
+                                    # Normalize the results_dir - if relative, it's relative to workspace
+                                    results_dir_abs = os.path.abspath(results_dir)
+                                    run_dir_abs = os.path.abspath(run_dir)
+                                    # Also check if run_dir ends with results_dir (for relative path matching)
+                                    matches = (
+                                        results_dir_abs == run_dir_abs or
+                                        run_dir_abs.endswith(results_dir.lstrip('./'))
+                                    )
+                                    if matches:
+                                        log_path = os.path.join(session_path, "session_log.jsonl")
+                                        if os.path.exists(log_path):
+                                            stat = os.stat(log_path)
+                                            if now - stat.st_mtime < 120:  # 2 min window for scratch
+                                                # Don't duplicate if already tracked
+                                                if not any(s["session_id"] == session_id for s in active_sessions):
+                                                    generation = meta.get("generation")
+                                                    session_info = {
+                                                        "session_id": session_id,
+                                                        "session_type": "scratch",
+                                                        "last_modified": stat.st_mtime,
+                                                        "age_seconds": int(now - stat.st_mtime),
+                                                        "generation": generation,
+                                                        "parent_id": meta.get("parent_id"),
+                                                        "patch_type": meta.get("patch_type"),
+                                                        "backend": meta.get("backend"),
+                                                        "current_action": f"Running Gen {generation} (agentic)" if generation else "Running (agentic)",
+                                                    }
+                                                    # Try to get more specific action from log
+                                                    try:
+                                                        with open(log_path, 'r') as lf:
+                                                            lines = lf.readlines()
+                                                            if lines:
+                                                                last_line = lines[-1].strip()
+                                                                if last_line:
+                                                                    event = json.loads(last_line)
+                                                                    event_type = event.get("type", "")
+                                                                    if event_type == "tool_use":
+                                                                        tool = event.get("tool", {})
+                                                                        session_info["current_action"] = f"Using {tool.get('name', 'tool')}"
+                                                                    elif event_type == "assistant":
+                                                                        session_info["current_action"] = "Thinking..."
+                                                                    elif event_type in ("command", "command_execution"):
+                                                                        item = event.get("item", {})
+                                                                        cmd = item.get("command", event.get("command", ""))[:30]
+                                                                        session_info["current_action"] = f"Running: {cmd}..." if cmd else f"Running Gen {generation}"
+                                                    except:
+                                                        pass
+                                                    active_sessions.append(session_info)
+                        except:
+                            pass
+            except:
+                pass
+
+        return active_sessions
 
     def handle_list_databases(self):
         """Scan the search root directory for .db files."""

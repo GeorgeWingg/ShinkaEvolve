@@ -25,6 +25,8 @@ The WebUI serves as a dashboard for monitoring Shinka evolution experiments, pro
 
 ![WebUI Screenshot](webui.png)
 
+> Note (2025-11-27): The Human Feedback capture tab was removed as out-of-scope. The WebUI now focuses on run telemetry, code/diffs, evaluator output, and meta analysis without in-app rating or text feedback inputs.
+
 ## Quick Start
 
 ### Local Experiment

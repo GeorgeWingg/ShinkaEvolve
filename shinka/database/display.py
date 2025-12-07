@@ -463,14 +463,19 @@ class DatabaseDisplay:
                 rank_str = f"#{rank}"
                 score_str = combined_score_str
 
+            patch_name_val = prog.metadata.get("patch_name") if prog.metadata else None
+            patch_type_val = prog.metadata.get("patch_type") if prog.metadata else None
+            patch_name = (patch_name_val or "N/A")[:30]
+            patch_type = (patch_type_val or "N/A")[:6]
+
             highlight_table.add_row(
                 rank_str,
                 str(prog.generation),
                 correct_str,
                 score_str,
                 f"{prog.complexity:.1f}",
-                prog.metadata.get("patch_name", "N/A")[:30],
-                prog.metadata.get("patch_type", "N/A")[:6],
+                patch_name,
+                patch_type,
                 island_display,
                 str(children_count),
                 ts_str,
@@ -599,9 +604,13 @@ class DatabaseDisplay:
                 else:
                     time_display = f"{time_val:.1f}s"
 
-            # Patch name and type
-            patch_name = prog.metadata.get("patch_name", "[dim]N/A[/dim]")[:30]
-            patch_type = prog.metadata.get("patch_type", "[dim]N/A[/dim]")
+            # Patch name and type (metadata may omit or set them to None)
+            metadata = prog.metadata or {}
+            raw_patch_name = metadata.get("patch_name")
+            patch_name = raw_patch_name or "[dim]N/A[/dim]"
+            if len(patch_name) > 30:
+                patch_name = patch_name[:30]
+            patch_type = metadata.get("patch_type") or "[dim]N/A[/dim]"
 
             return [
                 role_name,
