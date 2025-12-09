@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import time
@@ -14,6 +15,8 @@ from shinka.tools.codex_session_registry import (
     remove_session_process,
     update_session_process,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeUnavailableError(RuntimeError):
@@ -142,8 +145,24 @@ def run_claude_task(
         cmd.extend(["--model", profile])
 
     # Permission/sandbox handling
-    # full-auto or workspace-write → bypass all permission checks
+    # Check selected profile for skip_permissions setting
+    skip_permissions = False
     if approval_mode == "full-auto" or (sandbox and str(sandbox).strip()):
+        skip_permissions = True
+    else:
+        # Load from selected profile
+        try:
+            from shinka.webui.cli_profiles import get_selected_profiles_manager
+            selected_mgr = get_selected_profiles_manager()
+            selection = selected_mgr.get_selected("claude")
+            # Default to True if not explicitly set to False
+            skip_permissions = selection.get("skip_permissions", True)
+            logger.debug(f"Claude skip_permissions from selected profile: {skip_permissions}")
+        except Exception as e:
+            logger.debug(f"Could not load Claude selected profile: {e}")
+            skip_permissions = True  # Default to skipping for agentic mode
+
+    if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
 
     # Session resume
@@ -155,13 +174,43 @@ def run_claude_task(
     # user prompt by the sampler. The system_prompt param here contains only
     # operational instructions (AGENTIC_SYS_FORMAT) which we pass via --system-prompt.
     # Claude combines this with its built-in system behavior.
-    if system_prompt:
-        cmd.extend(["--system-prompt", system_prompt])
+    #
+    # Additionally, we load any custom system prompt and allowed_tools from the
+    # shinka profile config. This allows users to configure per-agent settings via the UI.
+
+    # Load custom config from shinka profile if configured
+    custom_system_prompt = None
+    custom_allowed_tools = None
+    try:
+        from shinka.webui.cli_profiles import ClaudeConfigManager
+        config_manager = ClaudeConfigManager()
+        claude_config = config_manager.load_config()
+        if claude_config.system_prompt:
+            custom_system_prompt = claude_config.system_prompt
+            logger.debug(f"Loaded custom system prompt from Claude shinka config")
+        if claude_config.allowed_tools:
+            custom_allowed_tools = claude_config.allowed_tools
+            logger.debug(f"Loaded allowed_tools from Claude shinka config: {custom_allowed_tools}")
+    except Exception as e:
+        logger.debug(f"Could not load Claude shinka config: {e}")
+
+    # Build the combined system prompt: custom system prompt (if any) + harness system prompt
+    combined_system_prompt = None
+    if custom_system_prompt and system_prompt:
+        combined_system_prompt = f"{custom_system_prompt}\n\n{system_prompt}"
+    elif custom_system_prompt:
+        combined_system_prompt = custom_system_prompt
+    elif system_prompt:
+        combined_system_prompt = system_prompt
+
+    if combined_system_prompt:
+        cmd.extend(["--system-prompt", combined_system_prompt])
 
     # Handle extra config flags
     for key, value in extra_cli_config.items():
         # Reserved keys: debug_log is handled separately, model is ShinkaAgent-only
-        if key in {"debug_log", "model"}:
+        # allowed_tools is handled via shinka config
+        if key in {"debug_log", "model", "allowed_tools"}:
             continue
         if value is None:
             continue
@@ -175,6 +224,10 @@ def run_claude_task(
             cmd.extend([f"--{flag_name}", ",".join(str(v) for v in value)])
         else:
             cmd.extend([f"--{flag_name}", str(value)])
+
+    # Apply allowed_tools from shinka config if set
+    if custom_allowed_tools:
+        cmd.extend(["--allowed-tools", ",".join(custom_allowed_tools)])
 
     max_retries = 5
     attempt = 0

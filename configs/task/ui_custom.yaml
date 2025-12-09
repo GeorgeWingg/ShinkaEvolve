@@ -1,0 +1,16 @@
+# Task config for UI-launched runs
+# All task-specific values come from UI - this just nulls out Hydra defaults
+# so circle_packing or other task configs don't bleed through
+
+evaluate_function: null
+
+distributed_job_config:
+  eval_program_path: null
+
+evo_config:
+  task_sys_msg: null
+  language: "python"
+  init_program_path: null
+  job_type: "local"
+
+exp_name: "shinka_ui"

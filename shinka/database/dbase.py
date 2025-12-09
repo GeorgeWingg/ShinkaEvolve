@@ -262,9 +262,9 @@ class ProgramDatabase:
         self.conn: Optional[sqlite3.Connection] = None
         self.cursor: Optional[sqlite3.Cursor] = None
         self.read_only = read_only
-        # Only create embedding client if not in read-only mode
-        # (e.g., WebUI doesn't need it for visualization)
-        if not read_only:
+        # Only create embedding client if not in read-only mode and embedding is enabled
+        # (e.g., WebUI doesn't need it for visualization, or user disabled embeddings)
+        if not read_only and embedding_model:
             self.embedding_client = EmbeddingClient(model_name=embedding_model)
         else:
             self.embedding_client = None

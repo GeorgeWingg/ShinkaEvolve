@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import time
@@ -15,6 +16,8 @@ from shinka.tools.codex_session_registry import (
     update_session_process,
 )
 from shinka.edit.cost_utils import calculate_cost
+
+logger = logging.getLogger(__name__)
 
 
 class CodexUnavailableError(RuntimeError):
@@ -118,16 +121,32 @@ def run_codex_task(
     # Use cli_path if provided, fall back to codex_path for backward compat
     binary = ensure_codex_available(cli_path or codex_path)
 
+    # Load selected profile and sandbox from Shinka config
+    selected_profile = profile
+    selected_sandbox = sandbox
+    try:
+        from shinka.webui.cli_profiles import get_selected_profiles_manager
+        selected_mgr = get_selected_profiles_manager()
+        selection = selected_mgr.get_selected("codex")
+        if selection.get("profile") and not profile:
+            selected_profile = selection["profile"]
+            logger.debug(f"Using selected Codex profile: {selected_profile}")
+        if selection.get("sandbox") and not sandbox:
+            selected_sandbox = selection["sandbox"]
+            logger.debug(f"Using selected Codex sandbox: {selected_sandbox}")
+    except Exception as e:
+        logger.debug(f"Could not load Codex selected profile: {e}")
+
     cmd = [str(binary), "exec"]
     if resume_session_id:
         cmd.append("resume")
     cmd.extend(["--json", "--skip-git-repo-check", "-C", str(workdir)])
 
-    if profile:
-        cmd.extend(["--profile", profile])
+    if selected_profile and selected_profile != "default":
+        cmd.extend(["--profile", selected_profile])
 
-    if sandbox:
-        cmd.extend(["--sandbox", sandbox])
+    if selected_sandbox:
+        cmd.extend(["--sandbox", selected_sandbox])
 
     if approval_mode == "full-auto":
         cmd.append("--full-auto")
@@ -144,9 +163,31 @@ def run_codex_task(
     # context (task_sys_msg) is included in the user prompt by the sampler.
     # The system_prompt param here contains only operational instructions (AGENTIC_SYS_FORMAT)
     # which we prepend to the user prompt since Codex has no system prompt mechanism.
+    #
+    # Additionally, we load any custom system prompt from the shinka profile config.
+    # This allows users to configure per-agent system prompts via the UI.
     full_prompt = user_prompt
+
+    # Load custom system prompt from shinka profile if configured
+    custom_system_prompt = None
+    try:
+        from shinka.webui.cli_profiles import CodexProfileManager
+        profile_manager = CodexProfileManager()
+        profile_config = profile_manager.load_config()
+        if profile_config.system_prompt:
+            custom_system_prompt = profile_config.system_prompt
+            logger.debug(f"Loaded custom system prompt from Codex shinka profile")
+    except Exception as e:
+        logger.debug(f"Could not load Codex shinka profile: {e}")
+
+    # Build the full prompt: custom system prompt (if any) + harness system prompt + user prompt
+    prompt_parts = []
+    if custom_system_prompt:
+        prompt_parts.append(custom_system_prompt)
     if system_prompt:
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        prompt_parts.append(system_prompt)
+    prompt_parts.append(user_prompt)
+    full_prompt = "\n\n".join(prompt_parts)
 
     cmd.append(full_prompt)
 

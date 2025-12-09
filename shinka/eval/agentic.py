@@ -61,6 +61,7 @@ class AgenticEvaluator:
         eval_sessions_root: Path,
         task_name: str,
         results_dir: Optional[str] = None,
+        eval_prompt: Optional[str] = None,
     ) -> AgenticEvaluatorResult:
         session_uuid = uuid.uuid4().hex
         session_dir = eval_sessions_root / session_uuid
@@ -73,6 +74,7 @@ class AgenticEvaluator:
             program_path=program_path,
             results_path=results_path,
             metrics_path=metrics_path,
+            eval_prompt=eval_prompt,
         )
 
         session_log: List[str] = []
@@ -163,15 +165,41 @@ class AgenticEvaluator:
         program_path: Path,
         results_path: Path,
         metrics_path: Path,
+        eval_prompt: Optional[str],
     ) -> tuple[str, str]:
-        command_str = " ".join(eval_command)
-        user = AGENTIC_EVAL_USER.format(
-            task_name=task_name,
-            eval_command=command_str,
-            program_path=program_path,
-            results_path=results_path,
-            metrics_path=metrics_path,
-        )
+        # Build a user prompt that always demands metrics.json, even when no eval command is provided.
+        eval_criteria = eval_prompt.strip() if eval_prompt else ""
+        if eval_command:
+            command_str = " ".join(eval_command)
+            user = AGENTIC_EVAL_USER.format(
+                task_name=task_name,
+                eval_command=command_str,
+                program_path=program_path,
+                results_path=results_path,
+                metrics_path=metrics_path,
+            )
+            if eval_criteria:
+                user += f"\n\nEvaluation criteria:\n{eval_criteria}\n"
+        else:
+            user = (
+                f"# Evaluation Task (no script provided)\n\n"
+                f"- Task: {task_name}\n"
+                f"- Working directory: repository root\n"
+                f"- Program path: {program_path}\n"
+                f"- Results path: {results_path}\n"
+                f"- Metrics JSON: {metrics_path}\n\n"
+                "No evaluation command was supplied.\n"
+                "1) Inspect the workspace/program as needed.\n"
+                "2) Judge the submission against the evaluation criteria below.\n"
+                "3) Write a JSON file at the metrics path with at least these keys:\n"
+                "   {\"combined_score\": <float 0-1>, \"details\": <short reason>}.\n"
+                "   You may add more fields if useful.\n"
+                "4) If you cannot score, still create metrics.json with combined_score=0 and details explaining why.\n"
+            )
+            if eval_criteria:
+                user += f"\nEvaluation criteria:\n{eval_criteria}\n"
+            user += "\nFinish after the metrics file is written.\n"
+
         return user.strip(), AGENTIC_EVAL_SYS.strip()
 
 

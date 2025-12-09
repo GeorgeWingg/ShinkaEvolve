@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import time
@@ -15,6 +16,8 @@ from shinka.tools.codex_session_registry import (
     update_session_process,
 )
 from shinka.edit.cost_utils import calculate_cost
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiUnavailableError(RuntimeError):
@@ -120,12 +123,55 @@ def run_gemini_task(
         else:
             cmd.extend([f"--{key}", str(value)])
 
-    # NOTE: Gemini CLI does not expose a system prompt flag (requires env var config).
-    # In agentic mode, the harness owns the system prompt entirely - task-specific
-    # context (task_sys_msg) is included in the user prompt by the sampler.
-    # The system_prompt param here contains only operational instructions (AGENTIC_SYS_FORMAT)
-    # which we prepend to the user prompt since Gemini CLI has no system prompt mechanism.
-    full_prompt = f"{system_prompt}\n\n{user_prompt}" if system_prompt else user_prompt
+    # NOTE: Gemini CLI supports system prompts via the GEMINI_SYSTEM_MD environment variable.
+    # When set, it points to a markdown file that REPLACES the default system prompt.
+    # In agentic mode, the harness owns the system prompt - we write the combined prompt
+    # (custom + AGENTIC_SYS_FORMAT) to a file and set GEMINI_SYSTEM_MD to point to it.
+
+    # Load custom system prompt from shinka config if configured
+    custom_system_prompt = None
+    selected_system_prompt_file = None
+    try:
+        from shinka.webui.cli_profiles import GeminiConfigManager
+        config_manager = GeminiConfigManager()
+        gemini_config = config_manager.load_config()
+        if gemini_config.system_prompt:
+            custom_system_prompt = gemini_config.system_prompt
+            logger.debug(f"Loaded custom system prompt from Gemini shinka config")
+        # Check if a specific system prompt file is selected
+        if gemini_config.extra_config.get("selected_system_prompt_file"):
+            selected_system_prompt_file = gemini_config.extra_config["selected_system_prompt_file"]
+            logger.debug(f"Using selected system prompt file: {selected_system_prompt_file}")
+    except Exception as e:
+        logger.debug(f"Could not load Gemini shinka config: {e}")
+
+    # Build the system prompt file for GEMINI_SYSTEM_MD
+    # Priority: selected file > custom prompt + harness prompt
+    shinka_sys_path = None
+    if selected_system_prompt_file and Path(selected_system_prompt_file).expanduser().exists():
+        # Use the selected system prompt file directly
+        shinka_sys_path = str(Path(selected_system_prompt_file).expanduser())
+        logger.debug(f"Using selected system prompt file: {shinka_sys_path}")
+    elif custom_system_prompt or system_prompt:
+        # Write combined system prompt to shinka_system.md
+        shinka_sys_path = Path.home() / ".gemini" / "shinka_system.md"
+        combined_parts = []
+        if custom_system_prompt:
+            combined_parts.append(custom_system_prompt)
+        if system_prompt:
+            combined_parts.append(system_prompt)
+        combined_system = "\n\n".join(combined_parts)
+        try:
+            shinka_sys_path.parent.mkdir(parents=True, exist_ok=True)
+            shinka_sys_path.write_text(combined_system)
+            shinka_sys_path = str(shinka_sys_path)
+            logger.debug(f"Wrote combined system prompt to {shinka_sys_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write system prompt file: {e}")
+            shinka_sys_path = None
+
+    # User prompt is passed directly (no prepending of system prompt)
+    full_prompt = user_prompt
 
     max_retries = 5
     attempt = 0
@@ -149,6 +195,21 @@ def run_gemini_task(
         env = {**subprocess.os.environ, "NO_COLOR": "1"}
         if extra_cli_config.get("no_extensions"):
             env["GEMINI_NO_EXTENSIONS"] = "1"
+        # Set GEMINI_SYSTEM_MD to point to the system prompt file
+        if shinka_sys_path:
+            env["GEMINI_SYSTEM_MD"] = shinka_sys_path
+            logger.debug(f"Set GEMINI_SYSTEM_MD={shinka_sys_path}")
+
+        # Check if sandbox should be disabled from selected profile
+        try:
+            from shinka.webui.cli_profiles import get_selected_profiles_manager
+            selected_mgr = get_selected_profiles_manager()
+            selection = selected_mgr.get_selected("gemini")
+            if selection.get("sandbox_disabled"):
+                env["GEMINI_SANDBOX"] = "0"
+                logger.debug("Disabled Gemini sandbox via GEMINI_SANDBOX=0")
+        except Exception as e:
+            logger.debug(f"Could not load Gemini selected profile: {e}")
 
         stdout_capture = None
         stderr_capture = None

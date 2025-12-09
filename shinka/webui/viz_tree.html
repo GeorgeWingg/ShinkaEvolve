@@ -960,6 +960,74 @@
             flex: 1;
         }
 
+        /* Workspace diff buttons */
+        .workspace-diff-btn {
+            white-space: nowrap;
+        }
+
+        .workspace-diff-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .workspace-diff-header {
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 6px;
+        }
+
+        .workspace-diff-header h3 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #0369a1;
+        }
+
+        .workspace-diff-info {
+            margin: 8px 0;
+            font-size: 12px;
+            color: #57606a;
+        }
+
+        .workspace-diff-info code {
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        .workspace-diff-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .workspace-diff-actions button {
+            padding: 6px 12px;
+            font-size: 12px;
+            border: 1px solid #d0d7de;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+        }
+
+        .workspace-diff-actions button:hover {
+            background: #f3f4f6;
+        }
+
+        .diff-no-workspace,
+        .diff-no-changes {
+            padding: 24px;
+            text-align: center;
+            color: #57606a;
+        }
+
+        .diff-no-workspace p,
+        .diff-no-changes p {
+            margin: 8px 0;
+        }
+
         /* Compare picker dropdown */
         .compare-picker {
             position: relative;
@@ -2651,28 +2719,29 @@
             animation: spin 1s linear infinite;
         }
 
-        #auto-refresh-toggle {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 4px;
-            padding: 5px 8px;
+        #new-run-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
+            font-weight: 600;
             margin-left: 5px;
+            color: white;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
         }
 
-        #auto-refresh-toggle:hover {
-            background: #fff1b8;
+        #new-run-btn:hover {
+            background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+            transform: translateY(-1px);
         }
 
-        #auto-refresh-toggle.active {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            color: #155724;
-        }
-
-        #auto-refresh-toggle.active:hover {
-            background: #c1e5c5;
+        #new-run-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
         }
 
 
@@ -4927,6 +4996,426 @@
                 transform: translateX(0);
             }
         }
+
+        /* ========== New Run Modal Styles ========== */
+        .new-run-modal .modal-content {
+            max-width: 700px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .new-run-modal .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .new-run-modal .modal-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .new-run-modal .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .new-run-modal .preset-controls {
+            display: flex;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .new-run-modal .preset-controls select {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .new-run-modal .preset-controls button {
+            padding: 6px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: white;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .new-run-modal .preset-controls button:hover {
+            background: #f3f4f6;
+        }
+
+        .new-run-tabs {
+            display: flex;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f9fafb;
+        }
+
+        .new-run-tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: #6b7280;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .new-run-tab:hover {
+            color: #374151;
+            background: rgba(0,0,0,0.02);
+        }
+
+        .new-run-tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            background: white;
+        }
+
+        .new-run-tab-content {
+            padding: 20px 24px;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
+        .form-section {
+            margin-bottom: 24px;
+        }
+
+        .form-section h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin: 0 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"],
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: monospace;
+        }
+
+        .form-group .help-text {
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 16px;
+        }
+
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: normal;
+            cursor: pointer;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: normal;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+        }
+
+        /* Advanced section styling */
+        .advanced-section {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0;
+            margin-top: 16px;
+        }
+
+        .advanced-section summary {
+            cursor: pointer;
+            padding: 12px 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+            list-style: none;
+        }
+
+        .advanced-section summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .advanced-section summary h3 {
+            display: inline;
+            font-size: 13px;
+            margin: 0;
+            border: none;
+            padding: 0;
+        }
+
+        .advanced-section summary::before {
+            content: "▶";
+            display: inline-block;
+            margin-right: 8px;
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+
+        .advanced-section[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        .advanced-section[open] summary {
+            border-radius: 8px 8px 0 0;
+        }
+
+        .advanced-section .advanced-content {
+            padding: 16px;
+        }
+
+        .section-help {
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        .new-run-modal .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f9fafb;
+        }
+
+        /* Export Drawer Styles */
+        .export-drawer {
+            background: #f6f8fa;
+            color: #24292f;
+            padding: 0;
+            overflow: hidden;
+            border-top: 1px solid #e1e4e8;
+            display: flex;
+            flex-direction: column;
+            
+            /* Animation properties */
+            max-height: 0;
+            opacity: 0;
+            transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease-out;
+            visibility: hidden;
+        }
+
+        .export-drawer.open {
+            max-height: 800px; /* Expand to fit content */
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .export-drawer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: #ffffff;
+            border-bottom: 1px solid #e1e4e8;
+            font-size: 12px;
+            font-weight: 600;
+            color: #57606a;
+        }
+        
+        .export-drawer-content {
+            padding: 16px;
+            font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #24292f;
+            line-height: 1.5;
+            background: #f6f8fa;
+        }
+
+        .export-drawer-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .export-copy-btn {
+            padding: 4px 10px;
+            background: #ffffff;
+            border: 1px solid #d0d7de;
+            color: #24292f;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 1px 0 rgba(27,31,35,0.04);
+        }
+
+        .export-copy-btn:hover {
+            background-color: #f3f4f6;
+            border-color: #b9bbbe;
+        }
+
+        .export-close-btn {
+            background: none;
+            border: none;
+            color: #57606a;
+            cursor: pointer;
+            font-size: 18px;
+            line-height: 1;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            border-radius: 4px;
+            transition: color 0.2s;
+        }
+
+        .export-close-btn:hover {
+            color: #24292f;
+            background-color: #eaeef2;
+        }
+
+        .validation-status {
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .validation-status.error {
+            color: #dc2626;
+        }
+
+        .validation-status.warning {
+            color: #d97706;
+        }
+
+        .validation-status.success {
+            color: #059669;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-secondary {
+            background: white;
+            border: 1px solid #d1d5db;
+            color: #374151;
+        }
+
+        .btn-secondary:hover {
+            background: #f3f4f6;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+        }
+
+        .btn-primary:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+        }
+
+        .source-config {
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-top: 12px;
+        }
+
+        .dependent-config {
+            margin-top: 16px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        .field-error {
+            border-color: #dc2626 !important;
+        }
+
+        .field-error:focus {
+            box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
+        }
+        /* ========== End New Run Modal Styles ========== */
     </style>
 </head>
 
@@ -4945,7 +5434,7 @@
                 </select>
                 <button id="refresh-files" title="Refresh available databases">🔄</button>
                 <button id="reload-data" title="Reload current data">📊</button>
-                <button id="auto-refresh-toggle" title="Toggle auto-refresh (every 3 seconds)">⏱️</button>
+                <button id="new-run-btn" title="Start a new evolution run">+ New Run</button>
                 <span id="scan-status" style="margin-left: 10px; font-size: 12px; color: #666;"></span>
                 <button id="download-programs-btn" title="Download top performing programs">💾</button>
             </div>
@@ -5996,6 +6485,10 @@
                 <div class="diff-controls">
                     <label>Compare with:</label>
                     ${comparePickerHtml}
+                    <div class="spacer"></div>
+                    <button id="diff-from-original-btn" class="workspace-diff-btn" title="Show all changes from original codebase">📊 Diff from Original</button>
+                    <button id="export-patch-btn" class="workspace-diff-btn" title="Export changes as a patch file">📥 Export Patch</button>
+                    <button id="copy-diff-btn" class="workspace-diff-btn" title="Copy diff to clipboard">📋 Copy</button>
                 </div>
             `;
 
@@ -6218,6 +6711,183 @@
                     }
                 });
             }
+
+            // Attach workspace diff button handlers
+            attachWorkspaceDiffButtonHandlers();
+        }
+
+        // Store the current workspace diff text for copy functionality
+        let currentWorkspaceDiff = '';
+
+        function attachWorkspaceDiffButtonHandlers() {
+            const diffFromOriginalBtn = document.getElementById('diff-from-original-btn');
+            const exportPatchBtn = document.getElementById('export-patch-btn');
+            const copyDiffBtn = document.getElementById('copy-diff-btn');
+
+            if (diffFromOriginalBtn) {
+                diffFromOriginalBtn.addEventListener('click', handleDiffFromOriginal);
+            }
+
+            if (exportPatchBtn) {
+                exportPatchBtn.addEventListener('click', handleExportPatch);
+            }
+
+            if (copyDiffBtn) {
+                copyDiffBtn.addEventListener('click', handleCopyDiff);
+            }
+        }
+
+        async function handleDiffFromOriginal() {
+            const dbPath = getCurrentDbPath();
+            const selectedNode = getSelectedNode();
+
+            if (!dbPath || !selectedNode) {
+                showToast('No database or node selected', 'error');
+                return;
+            }
+
+            const programId = selectedNode.id;
+            const diffWrapper = document.getElementById('code-diff-wrapper');
+
+            // Show loading state
+            diffWrapper.innerHTML = `
+                <div class="diff-loading">
+                    <div class="diff-loading-spinner"></div>
+                    <span>Fetching diff from original...</span>
+                </div>
+            `;
+
+            try {
+                const url = `/api/workspace_diff?db_path=${encodeURIComponent(dbPath)}&program_id=${encodeURIComponent(programId)}&from_original=true`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!data.ok) {
+                    // If no workspace, show helpful message
+                    if (data.error && data.error.includes('No isolated workspace')) {
+                        diffWrapper.innerHTML = `
+                            <div class="diff-no-workspace">
+                                <p>⚠️ This run was not created with an isolated workspace.</p>
+                                <p>To use "Diff from Original", start a new run with the "Isolate Workspace" option enabled.</p>
+                            </div>
+                        `;
+                    } else {
+                        showToast(data.error || 'Failed to get diff', 'error');
+                        renderDiffViewer(); // Restore normal view
+                    }
+                    return;
+                }
+
+                currentWorkspaceDiff = data.diff;
+
+                // Display the diff
+                if (!data.diff || data.diff.trim() === '') {
+                    diffWrapper.innerHTML = `
+                        <div class="diff-no-changes">
+                            <p>✅ No changes from original codebase.</p>
+                            <p>Commit: ${data.target_commit}</p>
+                        </div>
+                    `;
+                } else {
+                    const diffHtml = formatDiff(data.diff);
+                    const stats = getDiffStats(data.diff);
+                    diffWrapper.innerHTML = `
+                        <div class="workspace-diff-header">
+                            <h3>📊 Changes from Original Codebase</h3>
+                            <p class="workspace-diff-info">
+                                Workspace: <code>${data.workspace_path}</code>
+                            </p>
+                            <div class="diff-summary">
+                                <span class="diff-stat added">+${stats.additions}</span>
+                                <span class="diff-stat removed">-${stats.deletions}</span>
+                            </div>
+                            <div class="workspace-diff-actions">
+                                <button onclick="handleExportPatch()" title="Export as patch file">📥 Export Patch</button>
+                                <button onclick="handleCopyDiff()" title="Copy diff to clipboard">📋 Copy Diff</button>
+                                <button onclick="renderDiffViewer()" title="Go back to normal diff view">← Back</button>
+                            </div>
+                        </div>
+                        <div class="diff-code">${diffHtml}</div>
+                    `;
+                }
+            } catch (err) {
+                console.error('Error fetching diff from original:', err);
+                showToast('Failed to fetch diff: ' + err.message, 'error');
+                renderDiffViewer();
+            }
+        }
+
+        async function handleExportPatch() {
+            const dbPath = getCurrentDbPath();
+            const selectedNode = getSelectedNode();
+
+            if (!dbPath || !selectedNode) {
+                showToast('No database or node selected', 'error');
+                return;
+            }
+
+            const programId = selectedNode.id;
+
+            try {
+                const url = `/api/export_patch?db_path=${encodeURIComponent(dbPath)}&program_id=${encodeURIComponent(programId)}`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    showToast(data.error || 'Failed to export patch', 'error');
+                    return;
+                }
+
+                // Download the patch file
+                const blob = await response.blob();
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let filename = 'evolution.patch';
+                if (contentDisposition) {
+                    const match = contentDisposition.match(/filename="(.+)"/);
+                    if (match) filename = match[1];
+                }
+
+                const downloadUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+
+                showToast('Patch file downloaded: ' + filename, 'success');
+            } catch (err) {
+                console.error('Error exporting patch:', err);
+                showToast('Failed to export patch: ' + err.message, 'error');
+            }
+        }
+
+        function handleCopyDiff() {
+            // If we have workspace diff, copy that; otherwise copy current diff
+            let diffText = currentWorkspaceDiff;
+
+            if (!diffText && currentDiffFiles.length > 0) {
+                // Combine all current diff files
+                diffText = currentDiffFiles.map(f => {
+                    let content = '';
+                    if (f.path) content += `--- a/${f.path}\n+++ b/${f.path}\n`;
+                    content += f.diff || '';
+                    return content;
+                }).join('\n');
+            }
+
+            if (!diffText) {
+                showToast('No diff content to copy', 'error');
+                return;
+            }
+
+            navigator.clipboard.writeText(diffText).then(() => {
+                showToast('Diff copied to clipboard', 'success');
+            }).catch(err => {
+                console.error('Failed to copy diff:', err);
+                showToast('Failed to copy diff', 'error');
+            });
         }
 
         function filterComparePickerNodes(query) {
@@ -6617,28 +7287,8 @@
                     }
                 });
 
-                // Initialize auto-refresh functionality
+                // Initialize auto-refresh functionality (always on)
                 initializeAutoRefresh();
-
-                // Add auto-refresh toggle button handler
-                const autoRefreshToggle = document.getElementById('auto-refresh-toggle');
-                autoRefreshToggle.addEventListener('click', function () {
-                    if (autoRefreshEnabled) {
-                        stopAutoRefresh();
-                        autoRefreshToggle.classList.remove('active');
-                        autoRefreshToggle.title = "Enable auto-refresh (every 3 seconds)";
-                        console.log("[DEBUG] Auto-refresh disabled by user");
-                    } else {
-                        if (window.currentDbPath) {
-                            startAutoRefresh();
-                            autoRefreshToggle.classList.add('active');
-                            autoRefreshToggle.title = "Disable auto-refresh";
-                            console.log("[DEBUG] Auto-refresh enabled by user");
-                        } else {
-                            alert("Please select a database file first");
-                        }
-                    }
-                });
 
                 // Initialize copy and download button handlers
                 const copyBtn = document.getElementById('copy-code-btn');
@@ -7897,12 +8547,16 @@ ${'='.repeat(80)}
 
         function organizeDatabases(dbs) {
             const scanStatus = document.getElementById("scan-status");
+            const taskSelect = document.getElementById("task-select");
+            const resultSelect = document.getElementById("result-select");
 
             // Clear existing data
             tasksAndResults = {};
 
             if (dbs.length === 0) {
-                scanStatus.textContent = "No databases found.";
+                scanStatus.textContent = "No runs found. Start a new run to begin.";
+                taskSelect.innerHTML = '<option value="">Select a task...</option>';
+                resultSelect.innerHTML = '<option value="">Select a result...</option>';
                 return;
             }
 
@@ -8233,6 +8887,10 @@ ${'='.repeat(80)}
                 console.log("[DEBUG] Skipping DB loading during resize");
                 return;
             }
+
+            // Clear active jobs from previous run to prevent ghost in-progress nodes
+            activeJobs = [];
+            renderActiveJobsIndicator();
 
             document.getElementById("node-summary").innerHTML = "";
             d3.selectAll('.node').classed('selected', false);
@@ -9481,6 +10139,7 @@ ${'='.repeat(80)}
                                     <div class="card-menu-container" id="codex-menu-container" style="display:none;">
                                         <button class="card-menu-btn" onclick="toggleCardMenu('codex')">⋮</button>
                                         <div class="card-menu-dropdown" id="codex-menu-dropdown">
+                                            <button class="card-menu-item" onclick="openConfigureModal('codex'); closeAllCardMenus();">Configure</button>
                                             <button class="card-menu-item" onclick="refreshCodexUsage(); closeAllCardMenus();">Refresh</button>
                                             <button class="card-menu-item danger" onclick="signOutCodex(); closeAllCardMenus();">Sign out</button>
                                         </div>
@@ -9512,6 +10171,7 @@ ${'='.repeat(80)}
                                     <div class="card-menu-container" id="gemini-menu-container" style="display:none;">
                                         <button class="card-menu-btn" onclick="toggleCardMenu('gemini')">⋮</button>
                                         <div class="card-menu-dropdown" id="gemini-menu-dropdown">
+                                            <button class="card-menu-item" onclick="openConfigureModal('gemini'); closeAllCardMenus();">Configure</button>
                                             <button class="card-menu-item" onclick="refreshGeminiUsage(); closeAllCardMenus();">Refresh</button>
                                             <button class="card-menu-item danger" onclick="signOutGemini(); closeAllCardMenus();">Sign out</button>
                                         </div>
@@ -9567,6 +10227,7 @@ ${'='.repeat(80)}
                                     <div class="card-menu-container" id="claude-menu-container" style="display:none;">
                                         <button class="card-menu-btn" onclick="toggleCardMenu('claude')">⋮</button>
                                         <div class="card-menu-dropdown" id="claude-menu-dropdown">
+                                            <button class="card-menu-item" onclick="openConfigureModal('claude'); closeAllCardMenus();">Configure</button>
                                             <button class="card-menu-item" onclick="refreshClaudeUsage(); closeAllCardMenus();">Refresh</button>
                                             <button class="card-menu-item danger" onclick="signOutClaude(); closeAllCardMenus();">Sign out</button>
                                         </div>
@@ -9713,6 +10374,273 @@ ${'='.repeat(80)}
         function closeAllCardMenus() {
             document.querySelectorAll('.card-menu-dropdown').forEach(d => d.classList.remove('show'));
         }
+
+        // ========== CLI Configure Modal Functions ==========
+
+        // Current config state for the modal
+        let currentCliConfig = {
+            provider: null,
+            system_prompt: null,
+            mcp_servers: [],
+            allowed_tools: null,
+            extra_config: {},
+            supports_mcp: false,
+            supports_allowed_tools: false
+        };
+
+        function getProviderDisplayName(provider) {
+            const names = {
+                codex: 'Codex CLI',
+                gemini: 'Gemini CLI',
+                claude: 'Claude Code',
+                shinka: 'ShinkaAgent'
+            };
+            return names[provider] || provider;
+        }
+
+        function openConfigureModal(provider) {
+            const modal = document.getElementById('cli-config-modal');
+            document.getElementById('cli-config-provider').value = provider;
+            document.getElementById('cli-config-modal-title').innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="margin-right: 8px;">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                Configure ${getProviderDisplayName(provider)}
+            `;
+
+            // Show/hide provider-specific sections
+            document.getElementById('cli-config-profile-section').style.display = provider === 'codex' ? 'block' : 'none';
+            document.getElementById('cli-config-system-prompt-file-section').style.display = provider === 'gemini' ? 'block' : 'none';
+            document.getElementById('cli-config-codex-sandbox').style.display = provider === 'codex' ? 'block' : 'none';
+            document.getElementById('cli-config-gemini-sandbox').style.display = provider === 'gemini' ? 'block' : 'none';
+            document.getElementById('cli-config-claude-permissions').style.display = provider === 'claude' ? 'block' : 'none';
+
+            // Fetch both config and profiles in parallel
+            Promise.all([
+                fetch(`/api/cli_config/${provider}`).then(r => r.json()),
+                fetch(`/api/cli_config/${provider}/profiles`).then(r => r.json())
+            ])
+            .then(([config, profiles]) => {
+                if (!config.ok) {
+                    showToast(config.error || 'Failed to load configuration', 'error');
+                    return;
+                }
+
+                currentCliConfig = config;
+
+                // Populate system prompt
+                document.getElementById('cli-config-system-prompt').value = config.system_prompt || '';
+
+                // Show/hide MCP section based on provider support
+                const mcpSection = document.getElementById('cli-config-mcp-section');
+                mcpSection.style.display = config.supports_mcp ? 'block' : 'none';
+
+                // Show/hide allowed tools section (Claude only)
+                const allowedToolsSection = document.getElementById('cli-config-allowed-tools-section');
+                allowedToolsSection.style.display = config.supports_allowed_tools ? 'block' : 'none';
+
+                if (config.supports_allowed_tools && config.allowed_tools) {
+                    document.getElementById('cli-config-allowed-tools').value = config.allowed_tools.join(', ');
+                } else {
+                    document.getElementById('cli-config-allowed-tools').value = '';
+                }
+
+                // Populate extra config options
+                document.getElementById('cli-config-debug-log').checked = config.extra_config?.debug_log || false;
+
+                // Render MCP servers list
+                renderMCPServersList(config.mcp_servers || []);
+
+                // Handle profiles response
+                if (profiles.ok) {
+                    if (provider === 'codex') {
+                        // Populate Codex profile dropdown
+                        const profileSelect = document.getElementById('cli-config-profile');
+                        profileSelect.innerHTML = profiles.profiles.map(p =>
+                            `<option value="${escapeHtml(p.name)}"${p.name === profiles.selected ? ' selected' : ''}>
+                                ${escapeHtml(p.name)} (${escapeHtml(p.model || 'default')})
+                            </option>`
+                        ).join('');
+                        // Set sandbox
+                        document.getElementById('cli-config-sandbox').value = profiles.sandbox || 'workspace-write';
+                    } else if (provider === 'gemini') {
+                        // Populate Gemini system prompt file dropdown
+                        const promptSelect = document.getElementById('cli-config-system-prompt-file');
+                        let options = '<option value="">Use default harness prompt</option>';
+                        (profiles.system_prompts || []).forEach(p => {
+                            const selected = p.path === profiles.selected_system_prompt ? ' selected' : '';
+                            const sizeKB = (p.size / 1024).toFixed(1);
+                            options += `<option value="${escapeHtml(p.path)}"${selected}>${escapeHtml(p.name)} (${sizeKB} KB)</option>`;
+                        });
+                        promptSelect.innerHTML = options;
+                        // Set sandbox
+                        document.getElementById('cli-config-sandbox-disabled').checked = profiles.sandbox_disabled || false;
+                    } else if (provider === 'claude') {
+                        // Set permissions
+                        document.getElementById('cli-config-skip-permissions').checked = profiles.skip_permissions !== false;
+                    }
+                }
+
+                modal.style.display = 'flex';
+            })
+            .catch(err => {
+                console.error('Failed to load CLI config:', err);
+                showToast('Failed to load configuration', 'error');
+            });
+        }
+
+        function closeConfigureModal() {
+            document.getElementById('cli-config-modal').style.display = 'none';
+            currentCliConfig = {
+                provider: null,
+                system_prompt: null,
+                mcp_servers: [],
+                allowed_tools: null,
+                extra_config: {},
+                supports_mcp: false,
+                supports_allowed_tools: false
+            };
+        }
+
+        function renderMCPServersList(servers) {
+            const container = document.getElementById('cli-config-mcp-list');
+
+            if (!servers || servers.length === 0) {
+                container.innerHTML = '<div style="padding: 12px; color: #57606a; text-align: center; font-size: 13px;">No MCP servers configured</div>';
+                return;
+            }
+
+            container.innerHTML = servers.map(server => `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #d0d7de;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 500; font-size: 13px; color: #24292f;">${escapeHtml(server.name)}</div>
+                        <div style="font-size: 11px; color: #57606a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(server.command)} ${(server.args || []).join(' ')}</div>
+                    </div>
+                    <button onclick="removeMCPServer('${escapeHtml(server.name)}')" style="padding: 4px 8px; background: none; border: 1px solid #d0d7de; border-radius: 4px; color: #cf222e; font-size: 11px; cursor: pointer;">Remove</button>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showAddMCPDialog() {
+            document.getElementById('mcp-server-name').value = '';
+            document.getElementById('mcp-server-command').value = '';
+            document.getElementById('mcp-server-args').value = '';
+            document.getElementById('add-mcp-dialog').style.display = 'flex';
+        }
+
+        function hideAddMCPDialog() {
+            document.getElementById('add-mcp-dialog').style.display = 'none';
+        }
+
+        function addMCPServer() {
+            const name = document.getElementById('mcp-server-name').value.trim();
+            const command = document.getElementById('mcp-server-command').value.trim();
+            const argsStr = document.getElementById('mcp-server-args').value.trim();
+
+            if (!name || !command) {
+                showToast('Server name and command are required', 'error');
+                return;
+            }
+
+            // Parse args (comma-separated)
+            const args = argsStr ? argsStr.split(',').map(a => a.trim()).filter(a => a) : [];
+
+            // Add to current config
+            currentCliConfig.mcp_servers = currentCliConfig.mcp_servers.filter(s => s.name !== name);
+            currentCliConfig.mcp_servers.push({ name, command, args });
+
+            // Re-render the list
+            renderMCPServersList(currentCliConfig.mcp_servers);
+            hideAddMCPDialog();
+            showToast(`Added MCP server: ${name}`, 'success');
+        }
+
+        function removeMCPServer(name) {
+            currentCliConfig.mcp_servers = currentCliConfig.mcp_servers.filter(s => s.name !== name);
+            renderMCPServersList(currentCliConfig.mcp_servers);
+            showToast(`Removed MCP server: ${name}`, 'info');
+        }
+
+        function saveCliConfig() {
+            const provider = document.getElementById('cli-config-provider').value;
+            const systemPrompt = document.getElementById('cli-config-system-prompt').value.trim() || null;
+            const debugLog = document.getElementById('cli-config-debug-log').checked;
+
+            // Parse allowed tools (Claude only)
+            let allowedTools = null;
+            if (currentCliConfig.supports_allowed_tools) {
+                const toolsStr = document.getElementById('cli-config-allowed-tools').value.trim();
+                if (toolsStr) {
+                    allowedTools = toolsStr.split(',').map(t => t.trim()).filter(t => t);
+                }
+            }
+
+            // Build profile/sandbox selection based on provider
+            let profilePayload = {};
+            if (provider === 'codex') {
+                profilePayload = {
+                    profile: document.getElementById('cli-config-profile').value,
+                    sandbox: document.getElementById('cli-config-sandbox').value
+                };
+            } else if (provider === 'gemini') {
+                profilePayload = {
+                    system_prompt_file: document.getElementById('cli-config-system-prompt-file').value || null,
+                    sandbox_disabled: document.getElementById('cli-config-sandbox-disabled').checked
+                };
+            } else if (provider === 'claude') {
+                profilePayload = {
+                    skip_permissions: document.getElementById('cli-config-skip-permissions').checked
+                };
+            }
+
+            const configPayload = {
+                system_prompt: systemPrompt,
+                mcp_servers: currentCliConfig.mcp_servers,
+                allowed_tools: allowedTools,
+                extra_config: {
+                    debug_log: debugLog,
+                    // Store selected system prompt file in extra_config for Gemini
+                    ...(provider === 'gemini' && profilePayload.system_prompt_file ?
+                        { selected_system_prompt_file: profilePayload.system_prompt_file } : {})
+                }
+            };
+
+            // Save both config and profile selection
+            Promise.all([
+                fetch(`/api/cli_config/${provider}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(configPayload)
+                }).then(r => r.json()),
+                fetch(`/api/cli_config/${provider}/profiles`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(profilePayload)
+                }).then(r => r.json())
+            ])
+            .then(([configResult, profileResult]) => {
+                if (configResult.ok && profileResult.ok) {
+                    showToast(`Configuration saved for ${getProviderDisplayName(provider)}`, 'success');
+                    closeConfigureModal();
+                } else {
+                    const error = configResult.error || profileResult.error || 'Failed to save configuration';
+                    showToast(error, 'error');
+                }
+            })
+            .catch(err => {
+                console.error('Failed to save CLI config:', err);
+                showToast('Failed to save configuration', 'error');
+            });
+        }
+
+        // ========== End CLI Configure Modal Functions ==========
 
         function refreshCodexUsage() {
             fetchAndRenderAgentUsage();
@@ -18015,6 +18943,156 @@ ${'='.repeat(80)}
         </div>
     </div>
 
+    <!-- CLI Configure Modal -->
+    <div id="cli-config-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 id="cli-config-modal-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="margin-right: 8px;">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    Configure CLI Agent
+                </h3>
+                <button class="modal-close" onclick="closeConfigureModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <input type="hidden" id="cli-config-provider">
+
+                <!-- Profile Selection Section (Codex only) -->
+                <div id="cli-config-profile-section" style="margin-bottom: 20px; display: none;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Profile</label>
+                    <p style="font-size: 12px; color: #57606a; margin-bottom: 8px;">Select a Codex profile from your config.toml</p>
+                    <select id="cli-config-profile" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                        <option value="default">default</option>
+                    </select>
+                </div>
+
+                <!-- System Prompt File Selection (Gemini only) -->
+                <div id="cli-config-system-prompt-file-section" style="margin-bottom: 20px; display: none;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">System Prompt File</label>
+                    <p style="font-size: 12px; color: #57606a; margin-bottom: 8px;">Select a system prompt file from ~/.gemini/ (uses GEMINI_SYSTEM_MD)</p>
+                    <select id="cli-config-system-prompt-file" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                        <option value="">Use default harness prompt</option>
+                    </select>
+                </div>
+
+                <!-- Sandbox Configuration Section -->
+                <div id="cli-config-sandbox-section" style="margin-bottom: 20px; padding: 12px; background: #f6f8fa; border-radius: 6px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Sandbox / Permissions</label>
+
+                    <!-- Codex Sandbox -->
+                    <div id="cli-config-codex-sandbox" style="display: none; margin-top: 8px;">
+                        <label style="font-size: 13px; color: #24292f;">Sandbox Policy:</label>
+                        <select id="cli-config-sandbox" style="width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                            <option value="workspace-write">workspace-write (recommended)</option>
+                            <option value="danger-full-access">danger-full-access (no restrictions)</option>
+                        </select>
+                    </div>
+
+                    <!-- Gemini Sandbox -->
+                    <div id="cli-config-gemini-sandbox" style="display: none; margin-top: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #24292f;">
+                            <input type="checkbox" id="cli-config-sandbox-disabled">
+                            <span>Disable sandbox (full filesystem access)</span>
+                        </label>
+                    </div>
+
+                    <!-- Claude Permissions -->
+                    <div id="cli-config-claude-permissions" style="display: none; margin-top: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #24292f;">
+                            <input type="checkbox" id="cli-config-skip-permissions" checked>
+                            <span>Skip permission prompts (--dangerously-skip-permissions)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- System Prompt Section -->
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Custom System Prompt</label>
+                    <p style="font-size: 12px; color: #57606a; margin-bottom: 8px;">Additional instructions added to the agent's system prompt.</p>
+                    <textarea id="cli-config-system-prompt" rows="4" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-family: monospace; font-size: 13px; resize: vertical;" placeholder="Enter custom system instructions..."></textarea>
+                </div>
+
+                <!-- MCP Servers Section (hidden for Codex) -->
+                <div id="cli-config-mcp-section" style="margin-bottom: 20px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">MCP Servers</label>
+                    <p style="font-size: 12px; color: #57606a; margin-bottom: 8px;">Model Context Protocol servers available to the agent.</p>
+                    <div id="cli-config-mcp-list" style="border: 1px solid #d0d7de; border-radius: 6px; max-height: 150px; overflow-y: auto; margin-bottom: 8px;">
+                        <!-- MCP servers will be rendered here -->
+                        <div style="padding: 12px; color: #57606a; text-align: center; font-size: 13px;">No MCP servers configured</div>
+                    </div>
+                    <button onclick="showAddMCPDialog()" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; color: #24292f; font-size: 13px; cursor: pointer;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add MCP Server
+                    </button>
+                </div>
+
+                <!-- Allowed Tools Section (Claude only) -->
+                <div id="cli-config-allowed-tools-section" style="margin-bottom: 20px; display: none;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Allowed Tools</label>
+                    <p style="font-size: 12px; color: #57606a; margin-bottom: 8px;">Restrict which tools the agent can use. Leave empty for all tools.</p>
+                    <input type="text" id="cli-config-allowed-tools" placeholder="Bash, Read, Write, Edit, Glob, Grep..." style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                    <p style="font-size: 11px; color: #8b949e; margin-top: 4px;">Comma-separated list of tool names</p>
+                </div>
+
+                <!-- Extra CLI Options Section -->
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">CLI Options</label>
+                    <div id="cli-config-options" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #24292f;">
+                            <input type="checkbox" id="cli-config-debug-log">
+                            <span>Enable debug logging</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid #d0d7de;">
+                <button onclick="closeConfigureModal()" style="padding: 8px 16px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; color: #24292f; font-weight: 500; cursor: pointer;">Cancel</button>
+                <button onclick="saveCliConfig()" style="padding: 8px 16px; background: #2da44e; border: none; border-radius: 6px; color: white; font-weight: 500; cursor: pointer;">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add MCP Server Dialog -->
+    <div id="add-mcp-dialog" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <h3>Add MCP Server</h3>
+                <button class="modal-close" onclick="hideAddMCPDialog()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Server Name <span style="color: #cf222e;">*</span></label>
+                    <input type="text" id="mcp-server-name" placeholder="e.g., filesystem" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Command <span style="color: #cf222e;">*</span></label>
+                    <input type="text" id="mcp-server-command" placeholder="e.g., npx" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #24292f;">Arguments</label>
+                    <input type="text" id="mcp-server-args" placeholder="e.g., -y, @anthropic-ai/mcp-server-filesystem, /path" style="width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;">
+                    <p style="font-size: 11px; color: #8b949e; margin-top: 4px;">Comma-separated arguments</p>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid #d0d7de;">
+                <button onclick="hideAddMCPDialog()" style="padding: 8px 16px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; color: #24292f; font-weight: 500; cursor: pointer;">Cancel</button>
+                <button onclick="addMCPServer()" style="padding: 8px 16px; background: #2da44e; border: none; border-radius: 6px; color: white; font-weight: 500; cursor: pointer;">Add Server</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Custom Provider Dialog -->
     <div id="custom-provider-dialog" class="custom-provider-dialog">
         <div class="custom-provider-dialog-content">
@@ -18043,8 +19121,290 @@ ${'='.repeat(80)}
         </div>
     </div>
 
+    <!-- New Run Modal -->
+    <div id="new-run-modal" class="modal-overlay new-run-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>New Evolution Run</h2>
+                <button class="modal-close" onclick="closeNewRunModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="preset-controls">
+                    <select id="preset-selector" onchange="loadPreset(this.value)">
+                        <option value="">Load preset...</option>
+                    </select>
+                    <button onclick="savePreset()">Save</button>
+                    <button onclick="deletePreset()">Delete</button>
+                </div>
+                <div class="new-run-tabs">
+                    <div class="new-run-tab active" data-tab="codebase-tab">Codebase</div>
+                    <div class="new-run-tab" data-tab="agent-tab">Agent</div>
+                    <div class="new-run-tab" data-tab="evaluator-tab">Evaluator</div>
+                    <div class="new-run-tab" data-tab="run-tab">Run Config</div>
+                </div>
+                <div class="new-run-tab-content">
+                    <!-- Codebase Tab -->
+                    <div id="codebase-tab" class="tab-panel active">
+                        <div class="form-section">
+                            <h3>Source</h3>
+                            <div class="form-group">
+                                <label>Source Type</label>
+                                <div style="display: flex; gap: 24px; margin-top: 8px;">
+                                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                                        <input type="radio" name="source-type" value="local" checked onchange="toggleSourceType()" style="width: auto; margin: 0; cursor: pointer;">
+                                        <span>Local Path</span>
+                                    </label>
+                                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                                        <input type="radio" name="source-type" value="git" onchange="toggleSourceType()" style="width: auto; margin: 0; cursor: pointer;">
+                                        <span>Git Repository</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="local-source-config" class="source-config">
+                                <div class="form-group">
+                                    <label for="local-path">Local Directory Path</label>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="text" id="local-path" placeholder="/path/to/your/project" style="flex: 1;">
+                                        <button type="button" onclick="openFolderPicker()" title="Browse for folder" style="padding: 8px 12px; background: var(--primary-color, #4299e1); border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s ease, transform 0.1s ease;" onmouseover="this.style.background='#3182ce'" onmouseout="this.style.background='var(--primary-color, #4299e1)'">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="none">
+                                                <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V6h5.17l2 2H20v10z"/>
+                                                <path d="M4 6h5.17l2 2H20v10H4z" fill-opacity="0.3"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <small style="color: var(--text-muted, #888); margin-top: 4px; display: block;">Click the folder button to browse, or <a href="#" onclick="openCustomFolderBrowser(document.getElementById('local-path').value); return false;" style="color: var(--link-color, #63b3ed);">browse manually</a></small>
+                                </div>
+                            </div>
+                            <div id="git-source-config" class="source-config" style="display: none;">
+                                <div class="form-group">
+                                    <label for="git-url">Repository URL</label>
+                                    <input type="text" id="git-url" placeholder="https://github.com/user/repo.git">
+                                </div>
+                                <div class="form-group">
+                                    <label for="git-branch">Branch</label>
+                                    <input type="text" id="git-branch" value="main">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <h3>Workspace Isolation</h3>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="isolate-workspace" checked>
+                                    Isolate Workspace
+                                </label>
+                                <span class="help-text">Creates an isolated copy to evolve code safely without modifying the original</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Agent Tab -->
+                    <div id="agent-tab" class="tab-panel">
+                        <div class="form-section">
+                            <h3>Agent Backend</h3>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="agentic-mode" checked onchange="toggleAgenticMode()">
+                                    Enable Agentic Mode
+                                </label>
+                                <span class="help-text">Uses interactive agents for code generation</span>
+                            </div>
+                            <div id="agentic-config" class="dependent-config">
+                                <div class="form-group">
+                                    <label for="agent-backend">Backend</label>
+                                    <select id="agent-backend" onchange="toggleLLMConfig()">
+                                        <option value="codex" selected>Codex CLI</option>
+                                        <option value="claude">Claude CLI</option>
+                                        <option value="gemini">Gemini CLI</option>
+                                        <option value="shinka">ShinkaAgent (Custom)</option>
+                                    </select>
+                                    <span class="help-text">CLI tools use their native models automatically</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="shinka-llm-config" class="form-section" style="display: none;">
+                            <h3>Model Selection</h3>
+                            <span class="help-text section-help">ShinkaAgent requires explicit model configuration</span>
+                            <div class="form-group">
+                                <label for="llm-model-primary">Primary Model</label>
+                                <select id="llm-model-primary">
+                                    <optgroup label="OpenAI">
+                                        <option value="gpt-4.1" selected>gpt-4.1</option>
+                                        <option value="gpt-4o">gpt-4o</option>
+                                        <option value="gpt-4-turbo">gpt-4-turbo</option>
+                                        <option value="o1">o1</option>
+                                        <option value="o1-mini">o1-mini</option>
+                                    </optgroup>
+                                    <optgroup label="Anthropic">
+                                        <option value="claude-sonnet-4-20250514">claude-sonnet-4</option>
+                                        <option value="claude-3-5-sonnet-20241022">claude-3.5-sonnet</option>
+                                        <option value="claude-3-opus-20240229">claude-3-opus</option>
+                                    </optgroup>
+                                    <optgroup label="DeepSeek">
+                                        <option value="deepseek-chat">deepseek-chat</option>
+                                        <option value="deepseek-reasoner">deepseek-reasoner</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <h3>Embedding & Novelty</h3>
+                            <div class="form-group">
+                                <label for="embedding-model">Embedding Model</label>
+                                <select id="embedding-model">
+                                    <option value="text-embedding-3-small" selected>text-embedding-3-small (OpenAI)</option>
+                                    <option value="text-embedding-3-large">text-embedding-3-large (OpenAI)</option>
+                                    <option value="">None (disable novelty search)</option>
+                                </select>
+                                <span class="help-text">Embeddings enable novelty-based parent selection. Requires OpenAI API key.</span>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <h3>Evolution Prompt</h3>
+                            <div class="form-group">
+                                <label for="task-sys-msg">Task Instruction (User Prompt)</label>
+                                <textarea id="task-sys-msg" rows="6" placeholder="You are an expert programmer..."></textarea>
+                                <span class="help-text">Guide the agent's code evolution behavior</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Evaluator Tab -->
+                    <div id="evaluator-tab" class="tab-panel">
+                        <div class="form-section">
+                            <h3>Evaluator Configuration</h3>
+                            <div class="form-group">
+                                <label for="evaluator-mode">Evaluator Mode</label>
+                                <select id="evaluator-mode" onchange="toggleEvaluatorMode()">
+                                    <option value="agentic" selected>Agentic (LLM-based)</option>
+                                    <option value="legacy">Legacy (Python Script)</option>
+                                    <option value="auto">Auto (detect from task)</option>
+                                </select>
+                            </div>
+                            <div id="agentic-eval-config" class="dependent-config">
+                                <div class="form-group">
+                                    <label for="eval-backend">Evaluator Backend</label>
+                                    <select id="eval-backend">
+                                        <option value="codex" selected>Codex CLI (recommended)</option>
+                                        <option value="shinka">ShinkaAgent</option>
+                                        <option value="gemini">Gemini CLI</option>
+                                        <option value="claude">Claude CLI</option>
+                                    </select>
+                                    <span class="help-text">The agent that runs evaluation after each evolution step</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="eval-prompt">Evaluator Prompt</label>
+                                    <textarea id="eval-prompt" rows="4" placeholder="Run tests and report metrics..."></textarea>
+                                    <span class="help-text">Describe how to evaluate the evolved code</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Run Config Tab -->
+                    <div id="run-tab" class="tab-panel">
+                        <div class="form-section">
+                            <h3>Run Settings</h3>
+                            <div class="form-group">
+                                <label for="run-name">Run Name</label>
+                                <input type="text" id="run-name" placeholder="Auto-generated if empty">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="num-generations">Evolution Cycles</label>
+                                    <input type="number" id="num-generations" value="20" min="1" max="1000">
+                                    <span class="help-text">Agent improves → evaluate → repeat</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="max-parallel-jobs">Parallel Agents</label>
+                                    <input type="number" id="max-parallel-jobs" value="1" min="1" max="64">
+                                    <span class="help-text">Concurrent evolution jobs</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <h3>Stopping Conditions</h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="target-score">Target Score (optional)</label>
+                                    <input type="number" id="target-score" step="0.001" placeholder="Stop when reached">
+                                </div>
+                                <div class="form-group">
+                                    <label for="max-runtime-hours">Max Hours (0 = unlimited)</label>
+                                    <input type="number" id="max-runtime-hours" value="0" min="0">
+                                </div>
+                            </div>
+                        </div>
+                        <details class="form-section advanced-section">
+                            <summary><h3>Advanced Options</h3></summary>
+                            <div class="advanced-content">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="num-islands">Islands</label>
+                                        <input type="number" id="num-islands" value="2" min="1" max="16">
+                                        <span class="help-text">Parallel evolutionary populations</span>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="archive-size">Archive Size</label>
+                                        <input type="number" id="archive-size" value="20" min="10" max="500">
+                                        <span class="help-text">Solutions per island</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div id="validation-status" class="validation-status"></div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="exportRunConfig()" title="Copy CLI launch command to clipboard">Export Command</button>
+                    <button class="btn btn-secondary" onclick="validateNewRunConfig()">Validate</button>
+                    <button class="btn btn-primary" id="start-run-btn" onclick="startNewRun()">Start Run</button>
+                </div>
+            </div>
+            
+            <!-- Export Command Drawer -->
+            <div id="export-drawer" class="export-drawer" style="display: none;">
+                <div class="export-drawer-header">
+                    <span>CLI Launch Command</span>
+                    <div class="export-drawer-actions">
+                        <button class="export-copy-btn" onclick="copyExportCommand()">Copy to Clipboard</button>
+                        <button class="export-close-btn" onclick="toggleExportDrawer(false)" title="Close">×</button>
+                    </div>
+                </div>
+                <div id="export-command-content" class="export-drawer-content"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Folder Browser Modal -->
+    <div id="folder-browser-modal" class="modal-overlay" style="z-index: 10001;">
+        <div class="modal-content" style="width: 600px; max-width: 90vw;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color);">
+                <h2 style="margin: 0; font-size: 18px;">Browse Folders</h2>
+                <button onclick="closeFolderBrowser()" style="background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-muted);">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--border-color);">
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="folder-browser-path" placeholder="/path/to/folder" style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); color: var(--text-color); font-family: monospace; font-size: 13px;" onkeydown="if(event.key==='Enter')navigateToPath()">
+                    <button onclick="navigateToPath()" style="padding: 8px 16px; background: var(--button-bg); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;">Go</button>
+                </div>
+            </div>
+            <div id="folder-browser-content" style="min-height: 350px; padding: 12px 20px;">
+                <!-- Folder list populated by JS -->
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px;">
+                <button onclick="closeFolderBrowser()" style="padding: 8px 20px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button onclick="selectCurrentFolder()" style="padding: 8px 20px; background: var(--primary-color, #4299e1); border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: 500;">Select This Folder</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         // Unified API Key Modal Functions
@@ -18545,13 +19905,27 @@ ${'='.repeat(80)}
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
             toast.textContent = message;
+
+            // Errors stay until dismissed (click to close)
+            if (type === 'error') {
+                toast.style.cursor = 'pointer';
+                toast.addEventListener('click', () => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(100%)';
+                    setTimeout(() => toast.remove(), 300);
+                });
+            }
+
             container.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translateX(100%)';
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
+
+            // Only auto-dismiss non-error toasts
+            if (type !== 'error') {
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(100%)';
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
         }
 
         // Close modal on escape key
@@ -18604,6 +19978,674 @@ ${'='.repeat(80)}
                 showToast(`Session ${sessionId.substring(0, 8)}... is not linked to any program node in the tree.`, 'info');
             }
         }
+
+        // ========== New Run Modal Functions ==========
+
+        // Open the new run modal
+        function openNewRunModal() {
+            const modal = document.getElementById('new-run-modal');
+            modal.classList.add('visible');
+            loadPresetList();
+            // Initialize realtime listeners for export drawer
+            if (typeof attachRealtimeListeners === 'function') {
+                attachRealtimeListeners();
+            }
+        }
+
+        // Close the new run modal
+        function closeNewRunModal() {
+            const modal = document.getElementById('new-run-modal');
+            modal.classList.remove('visible');
+        }
+
+        // Toggle source type visibility
+        function toggleSourceType() {
+            const sourceType = document.querySelector('input[name="source-type"]:checked').value;
+            document.getElementById('local-source-config').style.display = sourceType === 'local' ? 'block' : 'none';
+            document.getElementById('git-source-config').style.display = sourceType === 'git' ? 'block' : 'none';
+        }
+
+        // Folder Browser State
+        let folderBrowserCurrentPath = '';
+
+        // Open folder picker - tries native OS dialog first, falls back to custom browser
+        async function openFolderPicker() {
+            const currentValue = document.getElementById('local-path').value;
+
+            // Try native picker first
+            try {
+                const response = await fetch(`/api/folder_picker_native?initial_dir=${encodeURIComponent(currentValue || '')}`);
+                const data = await response.json();
+
+                if (data.ok && data.path) {
+                    // Success! Set the path and we're done
+                    document.getElementById('local-path').value = data.path;
+                    return;
+                }
+
+                if (data.ok && !data.path) {
+                    // User cancelled the dialog, do nothing
+                    return;
+                }
+
+                // If fallback requested or error, use custom browser
+                if (data.fallback || !data.ok) {
+                    console.log('Native folder picker unavailable, using custom browser:', data.error);
+                    openCustomFolderBrowser(currentValue);
+                }
+            } catch (err) {
+                // Network error or other issue, fall back to custom browser
+                console.log('Native folder picker failed, using custom browser:', err);
+                openCustomFolderBrowser(currentValue);
+            }
+        }
+
+        // Open the custom in-browser folder picker (fallback)
+        function openCustomFolderBrowser(startPath) {
+            loadFolderBrowser(startPath || '');
+            document.getElementById('folder-browser-modal').classList.add('visible');
+        }
+
+        // Close folder browser modal
+        function closeFolderBrowser() {
+            document.getElementById('folder-browser-modal').classList.remove('visible');
+        }
+
+        // Load folder browser contents
+        async function loadFolderBrowser(path) {
+            const container = document.getElementById('folder-browser-content');
+            container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Loading...</div>';
+
+            try {
+                const url = path ? `/api/browse_folders?path=${encodeURIComponent(path)}` : '/api/browse_folders';
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!data.ok) {
+                    container.innerHTML = `<div style="padding: 20px; color: #e53e3e;">${data.error}</div>`;
+                    return;
+                }
+
+                folderBrowserCurrentPath = data.current_path;
+                document.getElementById('folder-browser-path').value = data.current_path;
+
+                let html = '';
+
+                // Quick access sidebar
+                html += '<div style="display: flex; gap: 16px; height: 350px;">';
+                html += '<div style="width: 140px; border-right: 1px solid var(--border-color); padding-right: 12px; overflow-y: auto;">';
+                html += '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">Quick Access</div>';
+                for (const loc of data.quick_access) {
+                    html += `<div onclick="loadFolderBrowser('${loc.path.replace(/'/g, "\\'")}')" style="padding: 6px 8px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">${loc.name}</div>`;
+                }
+                html += '</div>';
+
+                // Folder list
+                html += '<div style="flex: 1; overflow-y: auto; padding-left: 12px;">';
+
+                // Parent directory link
+                if (data.parent_path) {
+                    html += `<div onclick="loadFolderBrowser('${data.parent_path.replace(/'/g, "\\'")}')" style="padding: 8px 12px; cursor: pointer; border-radius: 4px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">`;
+                    html += '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>';
+                    html += '<span style="color: var(--text-muted);">..</span>';
+                    html += '</div>';
+                }
+
+                // Folders
+                if (data.folders.length === 0) {
+                    html += '<div style="padding: 20px; color: var(--text-muted); text-align: center;">No subfolders</div>';
+                } else {
+                    for (const folder of data.folders) {
+                        html += `<div onclick="loadFolderBrowser('${folder.path.replace(/'/g, "\\'")}')" style="padding: 8px 12px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; display: flex; align-items: center; gap: 8px;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">`;
+                        html += '<svg width="16" height="16" viewBox="0 0 24 24" fill="#4299e1" stroke="none"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>';
+                        html += `<span>${folder.name}</span>`;
+                        html += '</div>';
+                    }
+                }
+
+                html += '</div></div>';
+
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = `<div style="padding: 20px; color: #e53e3e;">Error: ${err.message}</div>`;
+            }
+        }
+
+        // Navigate to path typed in the path bar
+        function navigateToPath() {
+            const path = document.getElementById('folder-browser-path').value;
+            if (path) {
+                loadFolderBrowser(path);
+            }
+        }
+
+        // Select the current folder
+        function selectCurrentFolder() {
+            document.getElementById('local-path').value = folderBrowserCurrentPath;
+            closeFolderBrowser();
+        }
+
+        // Toggle agentic mode config visibility
+        function toggleAgenticMode() {
+            const enabled = document.getElementById('agentic-mode').checked;
+            document.getElementById('agentic-config').style.display = enabled ? 'block' : 'none';
+        }
+
+        // Toggle evaluator mode config visibility
+        function toggleEvaluatorMode() {
+            const mode = document.getElementById('evaluator-mode').value;
+            document.getElementById('agentic-eval-config').style.display = mode === 'agentic' ? 'block' : 'none';
+        }
+
+        // Toggle LLM config visibility based on backend
+        function toggleLLMConfig() {
+            const backend = document.getElementById('agent-backend').value;
+            // Only ShinkaAgent needs explicit LLM configuration
+            // CLI tools (codex, claude, gemini) use their native models
+            document.getElementById('shinka-llm-config').style.display = backend === 'shinka' ? 'block' : 'none';
+        }
+
+        // Setup new run tab switching
+        function setupNewRunTabs() {
+            document.querySelectorAll('.new-run-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    // Remove active from all tabs and panels
+                    document.querySelectorAll('.new-run-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.new-run-tab-content .tab-panel').forEach(p => p.classList.remove('active'));
+
+                    // Add active to clicked tab and corresponding panel
+                    tab.classList.add('active');
+                    const panelId = tab.dataset.tab;
+                    document.getElementById(panelId).classList.add('active');
+                });
+            });
+        }
+
+        // Collect form data into nested config structure
+        function collectNewRunConfig() {
+            const sourceType = document.querySelector('input[name="source-type"]:checked').value;
+            const backend = document.getElementById('agent-backend').value;
+
+            // For ShinkaAgent, get the selected model; for CLI tools, use empty array (they use native models)
+            let llmModels = [];
+            if (backend === 'shinka') {
+                const primaryModel = document.getElementById('llm-model-primary').value;
+                if (primaryModel) llmModels = [primaryModel];
+            }
+
+            // Embedding model is available for all backends
+            const embeddingModel = document.getElementById('embedding-model').value;
+
+            return {
+                codebase: {
+                    source_type: sourceType,
+                    local_path: document.getElementById('local-path').value,
+                    git_url: document.getElementById('git-url').value,
+                    git_branch: document.getElementById('git-branch').value,
+                    isolate_workspace: document.getElementById('isolate-workspace').checked,
+                },
+                agent: {
+                    agentic_mode: document.getElementById('agentic-mode').checked,
+                    backend: backend,
+                    // max_turns handled by backend defaults
+                    llm_models: llmModels,
+                    embedding_model: embeddingModel,
+                    task_sys_msg: document.getElementById('task-sys-msg').value,
+                },
+                evaluator: {
+                    mode: document.getElementById('evaluator-mode').value,
+                    agentic_config: {
+                        backend: document.getElementById('eval-backend').value,
+                        eval_prompt: document.getElementById('eval-prompt').value,
+                    },
+                },
+                run: {
+                    run_name: document.getElementById('run-name').value,
+                    num_generations: parseInt(document.getElementById('num-generations').value),
+                    max_parallel_jobs: parseInt(document.getElementById('max-parallel-jobs').value),
+                    num_islands: parseInt(document.getElementById('num-islands').value),
+                    archive_size: parseInt(document.getElementById('archive-size').value),
+                    target_score: document.getElementById('target-score').value ? parseFloat(document.getElementById('target-score').value) : null,
+                    max_runtime_hours: parseInt(document.getElementById('max-runtime-hours').value),
+                },
+                job: {
+                    job_type: 'local',
+                },
+            };
+        }
+
+        // Populate form from config
+        function populateNewRunForm(config) {
+            if (config.codebase) {
+                const cb = config.codebase;
+                document.querySelector(`input[name="source-type"][value="${cb.source_type || 'local'}"]`).checked = true;
+                toggleSourceType();
+                document.getElementById('local-path').value = cb.local_path || '';
+                document.getElementById('git-url').value = cb.git_url || '';
+                document.getElementById('git-branch').value = cb.git_branch || 'main';
+                document.getElementById('isolate-workspace').checked = cb.isolate_workspace !== false;
+            }
+            if (config.agent) {
+                const ag = config.agent;
+                document.getElementById('agentic-mode').checked = ag.agentic_mode !== false;
+                toggleAgenticMode();
+                document.getElementById('agent-backend').value = ag.backend || 'codex';
+                toggleLLMConfig();
+                // Set primary model if available (only for ShinkaAgent)
+                const models = ag.llm_models || ['gpt-4.1'];
+                if (models.length > 0) {
+                    document.getElementById('llm-model-primary').value = models[0];
+                }
+                document.getElementById('task-sys-msg').value = ag.task_sys_msg || '';
+                // Embedding model is always configurable
+                if (ag.embedding_model !== undefined) {
+                    document.getElementById('embedding-model').value = ag.embedding_model || '';
+                }
+            }
+            if (config.evaluator) {
+                const ev = config.evaluator;
+                document.getElementById('evaluator-mode').value = ev.mode || 'agentic';
+                toggleEvaluatorMode();
+                if (ev.agentic_config) {
+                    document.getElementById('eval-backend').value = ev.agentic_config.backend || 'codex';
+                    document.getElementById('eval-prompt').value = ev.agentic_config.eval_prompt || '';
+                }
+            }
+            if (config.run) {
+                const run = config.run;
+                document.getElementById('run-name').value = run.run_name || '';
+                document.getElementById('num-generations').value = run.num_generations || 20;
+                document.getElementById('max-parallel-jobs').value = run.max_parallel_jobs || 1;
+                document.getElementById('num-islands').value = run.num_islands || 2;
+                document.getElementById('archive-size').value = run.archive_size || 20;
+                document.getElementById('target-score').value = run.target_score || '';
+                document.getElementById('max-runtime-hours').value = run.max_runtime_hours || 0;
+            }
+        }
+
+        let currentExportCommand = '';
+        let realtimeListenersAttached = false;
+
+        // Debounce utility
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Fetch command from server and update UI
+        async function fetchAndShowExportCommand(toggle = true) {
+            const config = collectNewRunConfig();
+            try {
+                const response = await fetch('/api/evolution_run/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const data = await response.json();
+
+                if (data.ok) {
+                    currentExportCommand = data.command;
+                    document.getElementById('export-command-content').textContent = data.command;
+                    if (toggle) {
+                        toggleExportDrawer(true);
+                    }
+                } else if (toggle) {
+                    showToast('Failed to export config: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (err) {
+                if (toggle) {
+                    showToast('Failed to export config: ' + err.message, 'error');
+                }
+            }
+        }
+
+        // Export run configuration as CLI command
+        async function exportRunConfig() {
+            // Toggle off if already open
+            const drawer = document.getElementById('export-drawer');
+            if (drawer.classList.contains('open')) {
+                toggleExportDrawer(false);
+                return;
+            }
+            // Fetch and show
+            await fetchAndShowExportCommand(true);
+        }
+        
+        // Debounced update for realtime changes
+        const updateExportCommandRealtime = debounce(() => {
+            const drawer = document.getElementById('export-drawer');
+            if (drawer.classList.contains('open')) {
+                fetchAndShowExportCommand(false);
+            }
+        }, 300);
+
+        // Attach listeners to all inputs
+        function attachRealtimeListeners() {
+            if (realtimeListenersAttached) return;
+            
+            const modal = document.querySelector('.new-run-modal');
+            if (!modal) return;
+            
+            // Use delegation or attach to known inputs?
+            // Attaching to all existing inputs is safer for now.
+            const inputs = modal.querySelectorAll('input, select, textarea');
+            inputs.forEach(input => {
+                input.addEventListener('input', updateExportCommandRealtime);
+                input.addEventListener('change', updateExportCommandRealtime);
+            });
+            realtimeListenersAttached = true;
+        }
+
+        function toggleExportDrawer(show) {
+            const drawer = document.getElementById('export-drawer');
+            
+            if (show) {
+                drawer.style.display = 'flex';
+                // Force reflow to ensure transition triggers
+                void drawer.offsetHeight; 
+                drawer.classList.add('open');
+            } else {
+                drawer.classList.remove('open');
+                // Wait for transition to finish before hiding
+                setTimeout(() => {
+                    if (!drawer.classList.contains('open')) {
+                        drawer.style.display = 'none';
+                    }
+                }, 300);
+            }
+        }
+
+        function copyExportCommand() {
+             if (navigator.clipboard && navigator.clipboard.writeText) {
+                 navigator.clipboard.writeText(currentExportCommand).then(() => {
+                     const btn = document.querySelector('.export-copy-btn');
+                     const originalText = btn.textContent;
+                     btn.textContent = 'Copied!';
+                     btn.style.background = '#059669';
+                     btn.style.borderColor = '#059669';
+                     
+                     setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.style.background = '';
+                        btn.style.borderColor = '';
+                     }, 2000);
+                 }).catch(err => {
+                     console.error('Clipboard write failed', err);
+                     showToast('Clipboard write failed, please copy manually', 'error');
+                 });
+             } else {
+                 showToast('Clipboard API not supported, please copy manually', 'warning');
+             }
+        }
+
+        // Validate the new run configuration
+        async function validateNewRunConfig() {
+            const config = collectNewRunConfig();
+            const statusEl = document.getElementById('validation-status');
+            statusEl.innerHTML = '<span>Validating...</span>';
+            statusEl.className = 'validation-status';
+            statusEl.style.display = 'block'; // Allow multiline
+
+            try {
+                const response = await fetch('/api/evolution_run/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const data = await response.json();
+
+                statusEl.innerHTML = ''; // Clear loading message
+
+                if (data.valid) {
+                    const header = document.createElement('div');
+                    header.style.display = 'flex';
+                    header.style.alignItems = 'center';
+                    header.style.gap = '6px';
+                    
+                    if (data.warnings && data.warnings.length > 0) {
+                        header.innerHTML = `<span>⚠</span> ${data.warnings.length} warning(s)`;
+                        statusEl.className = 'validation-status warning';
+                        
+                        // Show warnings list
+                        const list = document.createElement('ul');
+                        list.style.margin = '4px 0 0 0';
+                        list.style.paddingLeft = '20px';
+                        list.style.maxHeight = '80px';
+                        list.style.overflowY = 'auto';
+                        list.style.fontSize = '12px';
+                        
+                        data.warnings.forEach(warn => {
+                            const item = document.createElement('li');
+                            item.textContent = warn.message || warn;
+                            list.appendChild(item);
+                        });
+                        statusEl.appendChild(header);
+                        statusEl.appendChild(list);
+                    } else {
+                        header.innerHTML = `<span>✓</span> Configuration valid`;
+                        statusEl.className = 'validation-status success';
+                        statusEl.appendChild(header);
+                    }
+                    document.getElementById('start-run-btn').disabled = false;
+                } else {
+                    const header = document.createElement('div');
+                    header.style.display = 'flex';
+                    header.style.alignItems = 'center';
+                    header.style.gap = '6px';
+                    header.style.fontWeight = '600';
+                    header.innerHTML = `<span>✗</span> Validation Failed (${data.errors.length} errors)`;
+                    
+                    statusEl.className = 'validation-status error';
+                    statusEl.appendChild(header);
+                    
+                    const list = document.createElement('ul');
+                    list.style.margin = '4px 0 0 0';
+                    list.style.paddingLeft = '20px';
+                    list.style.maxHeight = '100px';
+                    list.style.overflowY = 'auto';
+                    list.style.fontSize = '12px';
+
+                    data.errors.forEach(err => {
+                        const item = document.createElement('li');
+                        item.textContent = err.message || err;
+                        list.appendChild(item);
+                    });
+                    
+                    // Also show warnings if any
+                     if (data.warnings && data.warnings.length > 0) {
+                        data.warnings.forEach(warn => {
+                            const item = document.createElement('li');
+                            item.style.color = '#d97706'; // Warning color
+                            item.textContent = "Warning: " + (warn.message || warn);
+                            list.appendChild(item);
+                        });
+                    }
+
+                    statusEl.appendChild(list);
+                    document.getElementById('start-run-btn').disabled = true;
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<span>✗</span> Validation failed: ${err.message}`;
+                statusEl.className = 'validation-status error';
+                console.error(err);
+            }
+        }
+
+        // Start a new evolution run
+        async function startNewRun() {
+            const config = collectNewRunConfig();
+            const statusEl = document.getElementById('validation-status');
+            const startBtn = document.getElementById('start-run-btn');
+
+            startBtn.disabled = true;
+            statusEl.textContent = 'Starting run...';
+
+            try {
+                const response = await fetch('/api/evolution_run/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const data = await response.json();
+
+                if (data.ok) {
+                    showToast(`Run started: ${data.run_id}`, 'success');
+                    closeNewRunModal();
+                    // Refresh the database list to show the new run
+                    await findDatabases(true);
+                } else {
+                    showToast('Failed to start run: ' + data.error, 'error');
+                    startBtn.disabled = false;
+                }
+            } catch (err) {
+                showToast('Failed to start run: ' + err.message, 'error');
+                startBtn.disabled = false;
+            }
+        }
+
+        // Load preset list
+        async function loadPresetList() {
+            try {
+                const response = await fetch('/api/presets');
+                const data = await response.json();
+                const selector = document.getElementById('preset-selector');
+
+                // Clear existing options except first
+                selector.innerHTML = '<option value="">Load preset...</option>';
+
+                if (data.ok && data.presets) {
+                    data.presets.forEach(preset => {
+                        const option = document.createElement('option');
+                        option.value = preset.id;
+                        option.textContent = preset.name;
+                        selector.appendChild(option);
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to load presets:', err);
+            }
+        }
+
+        // Load a specific preset
+        async function loadPreset(presetId) {
+            if (!presetId) return;
+
+            try {
+                const response = await fetch(`/api/presets/${presetId}`);
+                const data = await response.json();
+
+                if (data.ok && data.preset && data.preset.config) {
+                    populateNewRunForm(data.preset.config);
+                    showToast(`Loaded preset: ${data.preset.name}`, 'success');
+                }
+            } catch (err) {
+                showToast('Failed to load preset: ' + err.message, 'error');
+            }
+        }
+
+        // Save current config as preset
+        async function savePreset() {
+            const name = prompt('Enter preset name:');
+            if (!name) return;
+
+            const config = collectNewRunConfig();
+
+            try {
+                const response = await fetch('/api/presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, config }),
+                });
+                const data = await response.json();
+
+                if (data.ok) {
+                    showToast(`Saved preset: ${name}`, 'success');
+                    loadPresetList();
+                } else {
+                    showToast('Failed to save preset: ' + data.error, 'error');
+                }
+            } catch (err) {
+                showToast('Failed to save preset: ' + err.message, 'error');
+            }
+        }
+
+        // Delete selected preset
+        async function deletePreset() {
+            const selector = document.getElementById('preset-selector');
+            const presetId = selector.value;
+
+            if (!presetId) {
+                showToast('Select a preset first', 'error');
+                return;
+            }
+
+            if (!confirm('Delete this preset?')) return;
+
+            try {
+                const response = await fetch(`/api/presets/${presetId}`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.ok) {
+                    showToast('Preset deleted', 'success');
+                    selector.value = '';
+                    loadPresetList();
+                }
+            } catch (err) {
+                showToast('Failed to delete preset: ' + err.message, 'error');
+            }
+        }
+
+        // Setup new run button click handler
+        document.addEventListener('DOMContentLoaded', function() {
+            const newRunBtn = document.getElementById('new-run-btn');
+            if (newRunBtn) {
+                newRunBtn.addEventListener('click', openNewRunModal);
+            }
+
+            // Setup tab switching
+            setupNewRunTabs();
+
+            // Close modal on overlay click
+            const modal = document.getElementById('new-run-modal');
+            if (modal) {
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) closeNewRunModal();
+                });
+            }
+
+            // Close modal on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal.classList.contains('visible')) {
+                    closeNewRunModal();
+                }
+            });
+
+            // Enable auto-refresh by default (always on)
+            startAutoRefresh();
+        });
+
+        // Start auto-refresh (always on, replacing old toggle)
+        function startAutoRefresh() {
+            // Auto-refresh every 3 seconds
+            setInterval(async () => {
+                if (window.currentDbPath) {
+                    try {
+                        await loadPrograms(window.currentDbPath, true);
+                    } catch (e) {
+                        // Silent fail for auto-refresh
+                    }
+                }
+            }, 3000);
+        }
+
+        // ========== End New Run Modal Functions ==========
     </script>
 </body>
 

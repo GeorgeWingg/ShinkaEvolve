@@ -69,6 +69,7 @@ from shinka.edit.shinka_agent import (
     ShinkaExecutionError,
 )
 from shinka.eval import AgenticEvaluator
+from shinka.eval.agentic import AgenticEvaluatorResult
 from shinka.core.sampler import PromptSampler
 from shinka.core.summarizer import MetaSummarizer
 from shinka.core.novelty_judge import NoveltyJudge
@@ -155,6 +156,7 @@ class AgenticEvaluatorConfig:
     max_seconds: int = 0
     cli_path: Optional[str] = None
     extra_cli_config: Dict[str, Any] = field(default_factory=dict)
+    eval_prompt: Optional[str] = None
 
     # Deprecated aliases for backward compatibility
     @property
@@ -361,9 +363,8 @@ class EvolutionRunner:
 
         # Initialize database and scheduler
         db_config.db_path = str(db_path)
-        embedding_model_to_use = (
-            evo_config.embedding_model or "text-embedding-3-small"
-        )
+        # Use embedding model from config - None disables novelty-based selection
+        embedding_model_to_use = evo_config.embedding_model
         self.db = ProgramDatabase(
             config=db_config, embedding_model=embedding_model_to_use
         )
@@ -499,6 +500,26 @@ class EvolutionRunner:
                 thread_name_prefix="agentic_worker",
             )
             logger.info(f"Initialized agentic executor with {max_workers} workers")
+
+        # Check if db exists but is empty (failed previous run)
+        # Note: last_iteration defaults to 0, so we need to check actual program count
+        if resuming_run and self.db._count_programs_in_db() == 0:
+            logger.warning(
+                "Database exists but is empty (previous run may have failed). "
+                "Cleaning up and starting fresh."
+            )
+            # Clean up any partial generation directories from the failed run
+            results_path = Path(self.results_dir)
+            for gen_dir in results_path.glob("gen_*"):
+                if gen_dir.is_dir():
+                    logger.info(f"Removing partial generation directory: {gen_dir}")
+                    shutil.rmtree(gen_dir, ignore_errors=True)
+            # Also remove any partial session directories
+            for sessions_dir in results_path.glob("*_sessions"):
+                if sessions_dir.is_dir():
+                    logger.info(f"Removing partial sessions directory: {sessions_dir}")
+                    shutil.rmtree(sessions_dir, ignore_errors=True)
+            resuming_run = False
 
         if resuming_run:
             self.completed_generations = self.db.last_iteration + 1
@@ -740,34 +761,135 @@ class EvolutionRunner:
         patch_description = "Initial program from file."
         patch_type = "init"
 
-        if self.evo_config.init_program_path:
+        # In agentic mode, if the specified init file is missing, treat it as not provided
+        # (fallback to empty seed) rather than crashing.
+        init_path_str = self.evo_config.init_program_path
+        if init_path_str and self.evo_config.agentic_mode and not Path(init_path_str).exists():
             if self.verbose:
-                logger.info(
-                    f"Copying initial program from {self.evo_config.init_program_path}"
+                logger.warning(
+                    f"Initial program '{init_path_str}' not found. "
+                    "Agentic mode enabled - falling back to empty seed."
                 )
-            init_path = Path(self.evo_config.init_program_path)
-            shutil.copy(init_path, exec_fname)
-            if self.evo_config.init_support_dir:
-                support_root = Path(self.evo_config.init_support_dir)
-                self._copy_support_tree(
-                    support_root,
-                    Path(initial_dir),
-                    exclude_file=init_path,
-                )
-        else:
-            if self.verbose:
-                logger.info(
-                    "`init_program_path` not provided, "
-                    "generating initial program with LLM..."
-                )
-            initial_code, patch_name, patch_description, api_costs = (
-                self.generate_initial_program()
-            )
-            with open(exec_fname, "w", encoding="utf-8") as f:
-                f.write(initial_code)
+            init_path_str = None
 
+        if init_path_str:
             if self.verbose:
-                logger.info(f"Initial program generated and saved to {exec_fname}")
+                logger.info(
+                    f"Copying initial program from {init_path_str}"
+                )
+            init_path = Path(init_path_str)
+
+            if init_path.is_dir():
+                # For directories (agentic mode on full codebase), copy entire tree
+                # but exclude results directory to avoid recursive copying
+                if self.verbose:
+                    logger.info(f"init_program_path is a directory, copying tree to {initial_dir}")
+
+                def ignore_patterns(directory, files):
+                    """Ignore results directory and common non-source files."""
+                    ignored = []
+                    for f in files:
+                        # Ignore results directory to prevent recursive copying
+                        if f == 'results':
+                            ignored.append(f)
+                        # Also ignore common non-source directories
+                        elif f in ('__pycache__', '.git', '.venv', 'node_modules', '.pytest_cache'):
+                            ignored.append(f)
+                    return ignored
+
+                shutil.copytree(init_path, Path(initial_dir), dirs_exist_ok=True, ignore=ignore_patterns)
+                # Create a placeholder exec_fname if it doesn't exist
+                if not Path(exec_fname).exists():
+                    # Write a minimal placeholder for agentic mode
+                    with open(exec_fname, 'w') as f:
+                        f.write("# Initial placeholder - agent will create the implementation\n")
+                        f.write("# Task: " + (self.evo_config.task_sys_msg or "Evolve this code") + "\n")
+            else:
+                # For single files, copy as before
+                shutil.copy(init_path, exec_fname)
+                if self.evo_config.init_support_dir:
+                    support_root = Path(self.evo_config.init_support_dir)
+                    self._copy_support_tree(
+                        support_root,
+                        Path(initial_dir),
+                        exclude_file=init_path,
+                    )
+        else:
+            if self.evo_config.agentic_mode:
+                # Agentic open-ended: create minimal empty file, skip evaluation.
+                # The agentic editor in gen_1 will create real code from scratch.
+                if self.verbose:
+                    logger.info("`init_program_path` not provided; creating empty seed for agentic run (no gen_0 eval).")
+                Path(exec_fname).parent.mkdir(parents=True, exist_ok=True)
+                with open(exec_fname, "w", encoding="utf-8") as f:
+                    f.write("")  # Empty file - agent creates everything in gen_1
+                api_costs = 0.0
+                patch_name = "empty_seed"
+                patch_description = "Empty seed for agentic open-ended evolution."
+
+                # Skip evaluation for empty seed - insert directly into DB
+                initial_corpus = self._build_embedding_corpus(Path(initial_dir), {})
+                code_embedding, e_cost = self.get_code_embedding(initial_corpus.text)
+
+                corpus_meta = {
+                    "embedding_corpus_meta": {
+                        "included_files": initial_corpus.included_files,
+                        "skipped_files": initial_corpus.skipped_files,
+                        "binary_files": initial_corpus.binary_files,
+                        "truncated": initial_corpus.truncated,
+                        "total_bytes": initial_corpus.total_bytes,
+                    }
+                }
+
+                db_program = Program(
+                    id=str(uuid.uuid4()),
+                    code=initial_corpus.text,
+                    language=self.evo_config.language,
+                    parent_id=None,
+                    generation=0,
+                    archive_inspiration_ids=[],
+                    top_k_inspiration_ids=[],
+                    code_diff=None,
+                    embedding=code_embedding,
+                    correct=False,  # Not evaluated
+                    combined_score=0.0,  # Will be scored in gen_1
+                    public_metrics={},
+                    private_metrics={},
+                    text_feedback="Empty seed - awaiting agentic creation in gen_1",
+                    metadata={
+                        "compute_time": 0.0,
+                        "api_costs": api_costs,
+                        "embed_cost": e_cost,
+                        "novelty_cost": 0.0,
+                        "patch_type": patch_type,
+                        "patch_name": patch_name,
+                        "patch_description": patch_description,
+                        "stdout_log": "",
+                        "stderr_log": "",
+                        "evaluator_mode": self.evaluator_mode,
+                        "skipped_gen0_eval": True,
+                        **corpus_meta,
+                    },
+                )
+                self.db.add(db_program, verbose=self.verbose)
+                # Note: Not calling meta_summarizer.add_evaluated_program since we're skipping eval
+                if self.verbose:
+                    logger.info(f"Empty seed inserted into DB (id={db_program.id[:8]}...), skipping gen_0 evaluation.")
+                return  # Exit early - no evaluation needed
+            else:
+                if self.verbose:
+                    logger.info(
+                        "`init_program_path` not provided, "
+                        "generating initial program with LLM..."
+                    )
+                initial_code, patch_name, patch_description, api_costs = (
+                    self.generate_initial_program()
+                )
+                with open(exec_fname, "w", encoding="utf-8") as f:
+                    f.write(initial_code)
+
+                if self.verbose:
+                    logger.info(f"Initial program generated and saved to {exec_fname}")
 
         if self.evaluator_mode == "agentic":
             results, rtime = self._run_agentic_evaluation(
@@ -1269,8 +1391,14 @@ class EvolutionRunner:
 
         agentic_eval_meta = payload.get("agentic_eval")
 
+        # Generate program ID first so we can use it in commit message
+        program_id = str(uuid.uuid4())
+
+        # Commit workspace changes and get the commit SHA (for isolated workspaces)
+        commit_sha = self._commit_workspace_changes(program_id, job.generation)
+
         db_program = Program(
-            id=str(uuid.uuid4()),
+            id=program_id,
             code=corpus_text,
             language=self.evo_config.language,
             parent_id=job.parent_id,
@@ -1292,6 +1420,7 @@ class EvolutionRunner:
                 "stdout_log": stdout_log,
                 "stderr_log": stderr_log,
                 "evaluator_mode": self.evaluator_mode,
+                **({"commit_sha": commit_sha} if commit_sha else {}),
             },
         )
         if agentic_eval_meta:
@@ -1932,28 +2061,39 @@ class EvolutionRunner:
         primary_content = agent_result.changed_files.get(
             context.primary_file, base_files[context.primary_file]
         )
-        patch_str = (
-            f"```{self.evo_config.language}\n{primary_content}\n```"
-        )
 
         # Use the extracted primary file content (without corpus headers) as the
         # original for patch application, not the full corpus text.
         original_for_patch = base_files[context.primary_file]
 
-        (
-            _,
-            num_applied,
-            _output_path,
-            error_msg,
-            patch_txt,
-            patch_path,
-        ) = apply_full_patch(
-            patch_str=patch_str,
-            original_str=original_for_patch,
-            patch_dir=patch_dir,
-            language=self.evo_config.language,
-            verbose=False,
-        )
+        # Special case: if parent is empty (open-ended agentic), skip patch system
+        # and write content directly - there's nothing to diff against
+        if not original_for_patch.strip():
+            # Parent was empty, just write the new content directly
+            output_path = Path(patch_dir) / f"main.{self.lang_ext}"
+            output_path.write_text(primary_content, encoding="utf-8")
+            num_applied = 1
+            error_msg = None
+            patch_txt = None
+            patch_path = None
+        else:
+            patch_str = (
+                f"```{self.evo_config.language}\n{primary_content}\n```"
+            )
+            (
+                _,
+                num_applied,
+                _output_path,
+                error_msg,
+                patch_txt,
+                patch_path,
+            ) = apply_full_patch(
+                patch_str=patch_str,
+                original_str=original_for_patch,
+                patch_dir=patch_dir,
+                language=self.evo_config.language,
+                verbose=False,
+            )
 
         if error_msg is not None or num_applied == 0:
             return failure_meta(
@@ -2310,6 +2450,9 @@ class EvolutionRunner:
     def _build_eval_command(self, exec_fname: str, results_dir: str) -> List[str]:
         program_dir = str(Path(exec_fname).parent.resolve())
         env_prefix = f"PYTHONPATH={program_dir}:${{PYTHONPATH:-}}"
+        if not self.job_config.eval_program_path:
+            # No external evaluator script; agentic evaluator will score directly.
+            return []
         cmd = [
             env_prefix,
             "python",
@@ -2324,6 +2467,88 @@ class EvolutionRunner:
             cmd.extend([f"--{key}", str(value)])
         return cmd
 
+    def _commit_workspace_changes(
+        self,
+        program_id: str,
+        generation: int,
+    ) -> Optional[str]:
+        """Commit any changes in the isolated workspace and return the commit SHA.
+
+        This is used to track each program's changes as a git commit,
+        enabling diff viewing and patch export in the UI.
+
+        Args:
+            program_id: The ID of the program being saved
+            generation: The generation number
+
+        Returns:
+            Commit SHA if changes were committed, None if no workspace or no changes
+        """
+        import subprocess
+
+        # Check if we have an isolated workspace (it's at results_dir / "workspace")
+        workspace_path = Path(self.results_dir) / "workspace"
+        if not workspace_path.exists():
+            return None
+
+        # Check if it's a git repo
+        git_dir = workspace_path / ".git"
+        if not git_dir.exists():
+            return None
+
+        try:
+            # Check if there are any changes
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=workspace_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if not result.stdout.strip():
+                logger.debug(f"No changes to commit for program {program_id[:8]}")
+                return None
+
+            # Add all changes
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=workspace_path,
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+
+            # Commit with a descriptive message
+            commit_msg = f"Generation {generation}: {program_id[:8]}"
+            subprocess.run(
+                ["git", "commit", "-m", commit_msg],
+                cwd=workspace_path,
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+
+            # Get commit SHA
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=workspace_path,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            commit_sha = result.stdout.strip()
+            logger.info(f"Committed workspace changes for program {program_id[:8]}: {commit_sha[:8]}")
+            return commit_sha
+
+        except subprocess.SubprocessError as e:
+            logger.warning(f"Failed to commit workspace changes: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error committing workspace: {e}")
+            return None
+
     def _run_agentic_evaluation(
         self,
         *,
@@ -2335,7 +2560,9 @@ class EvolutionRunner:
         if self.agentic_evaluator is None:
             raise RuntimeError("Agentic evaluator not initialized")
 
-        repo_root = Path.cwd()
+        # Use generation_dir as workdir so the sandbox allows writes to results_dir
+        # This is critical for external workspaces where results_dir is outside the server's repo
+        repo_root = generation_dir.resolve()
         Path(results_dir).mkdir(parents=True, exist_ok=True)
         metrics_path = Path(results_dir) / "metrics.json"
         eval_sessions_root = self.agentic_eval_sessions_dir
@@ -2351,16 +2578,44 @@ class EvolutionRunner:
                 return str(raw)
 
         start = time.time()
-        result = self.agentic_evaluator.evaluate(
-            repo_root=repo_root,
-            eval_command=eval_command,
-            program_path=Path(exec_fname),
-            results_path=Path(results_dir),
-            metrics_path=metrics_path,
-            eval_sessions_root=eval_sessions_root,
-            task_name=self.job_config.eval_program_path or "evaluate.py",
-            results_dir=str(self.results_dir),
-        )
+        result = None
+        try:
+            result = self.agentic_evaluator.evaluate(
+                repo_root=repo_root,
+                eval_command=eval_command,
+                program_path=Path(exec_fname),
+                results_path=Path(results_dir),
+                metrics_path=metrics_path,
+                eval_sessions_root=eval_sessions_root,
+                task_name=self.job_config.eval_program_path or "agentic_evaluator",
+                results_dir=str(self.results_dir),
+                eval_prompt=getattr(self.evo_config.evaluator.agentic, "eval_prompt", None),
+            )
+        except (CodexExecutionError, GeminiExecutionError, ClaudeExecutionError, ShinkaExecutionError) as exc:
+            # If metrics are missing, emit a fallback so the run can proceed
+            if not metrics_path.exists():
+                metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                fallback = {
+                    "combined_score": 0.0,
+                    "details": f"Agentic evaluator failed: {exc}",
+                }
+                metrics_path.write_text(json.dumps(fallback), encoding="utf-8")
+            # Build a minimal result so downstream logic continues
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {"combined_score": 0.0, "details": str(exc)}
+            result = AgenticEvaluatorResult(
+                metrics=metrics,
+                correct=False,
+                error_message=str(exc),
+                stdout_log="",
+                stderr_log="",
+                session_log=[],
+                commands_run=[],
+                session_log_path=metrics_path.parent / "session_log.missing",
+                session_events=[],
+                session_id=None,
+                session_dir=metrics_path.parent,
+                elapsed_seconds=time.time() - start,
+            )
         rtime = time.time() - start
 
         events_preview = result.session_events[-AGENTIC_EVAL_PREVIEW_LIMIT:]

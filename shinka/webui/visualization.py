@@ -27,6 +27,18 @@ from typing import Optional, Dict, Any, Tuple
 
 from shinka.database import DatabaseConfig, ProgramDatabase
 from shinka.tools.codex_session_registry import list_session_processes
+from shinka.webui.credential_checker import CredentialChecker
+from shinka.webui.presets import PresetManager
+from shinka.webui.git_worktree import GitWorktreeManager
+from shinka.webui.run_config import UIRunConfig, RunConfigBuilder, flatten_nested_config
+from shinka.webui.cli_profiles import (
+    get_cli_config_manager,
+    get_selected_profiles_manager,
+    CLIConfig,
+    MCPServer,
+    CodexProfileManager,
+    GeminiConfigManager,
+)
 
 # We'll use a simple text-to-PDF approach instead of complex dependencies
 WEASYPRINT_AVAILABLE = False
@@ -34,6 +46,10 @@ WEASYPRINT_AVAILABLE = False
 DEFAULT_PORT = 8000
 CACHE_EXPIRATION_SECONDS = 5  # Cache data for 5 seconds
 db_cache: Dict[str, Tuple[float, Any]] = {}
+
+# Track additional results directories from UI-launched runs (outside the server's results/ dir)
+# This allows the UI to find databases in external workspaces
+launched_run_roots: set = set()
 
 
 class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -100,6 +116,48 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/session_state" and "session_id" in query:
             return self.handle_session_state(query)
 
+        # New Run feature endpoints
+        if path == "/api/credentials/check":
+            return self.handle_credentials_check()
+
+        if path == "/api/presets":
+            return self.handle_presets_list()
+
+        if path.startswith("/api/presets/") and len(path.split("/")) == 4:
+            preset_id = path.split("/")[3]
+            return self.handle_preset_get(preset_id)
+
+        if path == "/api/config_defaults":
+            return self.handle_config_defaults()
+
+        if path == "/api/browse_folders":
+            return self.handle_browse_folders(query)
+
+        if path == "/api/folder_picker_native":
+            return self.handle_folder_picker_native(query)
+
+        # CLI Config endpoints
+        if path.startswith("/api/cli_config/"):
+            parts = path.split("/")
+            if len(parts) >= 4:
+                provider = parts[3]
+                if len(parts) == 4:
+                    # GET /api/cli_config/{provider}
+                    return self.handle_cli_config_get(provider)
+                elif len(parts) == 5 and parts[4] == "mcp":
+                    # GET /api/cli_config/{provider}/mcp
+                    return self.handle_cli_config_mcp_list(provider)
+                elif len(parts) == 5 and parts[4] == "profiles":
+                    # GET /api/cli_config/{provider}/profiles
+                    return self.handle_cli_config_profiles_list(provider)
+
+        # Workspace diff and patch export endpoints
+        if path == "/api/workspace_diff" and "db_path" in query:
+            return self.handle_workspace_diff(query)
+
+        if path == "/api/export_patch" and "db_path" in query and "program_id" in query:
+            return self.handle_export_patch(query)
+
         if path == "/":
             print("[SERVER] Root path requested, serving viz_tree.html")
             self.path = "/viz_tree.html"
@@ -116,8 +174,50 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/evolution_run/delete":
             return self.handle_evolution_run_delete()
 
+        if path == "/api/evolution_run/stop":
+            return self.handle_evolution_run_stop()
+
         if path == "/api/credentials":
             return self.handle_credentials_post()
+
+        # New Run feature endpoints
+        if path == "/api/evolution_run/start":
+            return self.handle_evolution_run_start()
+
+        if path == "/api/evolution_run/validate":
+            return self.handle_evolution_run_validate()
+
+        if path == "/api/evolution_run/export":
+            return self.handle_evolution_run_export()
+
+        if path == "/api/presets":
+            return self.handle_preset_save()
+
+        if path.startswith("/api/presets/") and len(path.split("/")) == 4:
+            preset_id = path.split("/")[3]
+            return self.handle_preset_delete(preset_id)
+
+        if path == "/api/git/prepare":
+            return self.handle_git_prepare()
+
+        # CLI Config endpoints
+        if path.startswith("/api/cli_config/"):
+            parts = path.split("/")
+            if len(parts) >= 4:
+                provider = parts[3]
+                if len(parts) == 4:
+                    # POST /api/cli_config/{provider}
+                    return self.handle_cli_config_save(provider)
+                elif len(parts) == 5 and parts[4] == "mcp":
+                    # POST /api/cli_config/{provider}/mcp (add MCP server)
+                    return self.handle_cli_config_mcp_add(provider)
+                elif len(parts) == 6 and parts[4] == "mcp":
+                    # POST /api/cli_config/{provider}/mcp/{name} (delete MCP server)
+                    mcp_name = parts[5]
+                    return self.handle_cli_config_mcp_delete(provider, mcp_name)
+                elif len(parts) == 5 and parts[4] == "profiles":
+                    # POST /api/cli_config/{provider}/profiles (update selected profile)
+                    return self.handle_cli_config_profiles_update(provider)
 
         # Return 404 for unknown POST endpoints
         self.send_error(404, f"Unknown POST endpoint: {path}")
@@ -125,6 +225,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_evolution_run_delete(self):
         """Delete an evolution run directory."""
         import shutil
+        import signal
+        import subprocess
 
         try:
             # Read the request body
@@ -141,12 +243,24 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"ok": False, "error": "No run_dir provided"})
                 return
 
-            # Resolve the path and validate it's under search_root
+            # Resolve the path
             run_path = os.path.abspath(run_dir)
             search_root = os.path.abspath(self.search_root)
 
-            # Security check: ensure the path is under search_root/results
-            if not run_path.startswith(search_root):
+            # Security check: ensure path is under search_root OR in launched_run_roots
+            is_allowed = run_path.startswith(search_root)
+            if not is_allowed:
+                # Check if it's from an external workspace we launched
+                for external_root in launched_run_roots:
+                    if run_path.startswith(os.path.abspath(external_root)) or run_path == os.path.abspath(external_root):
+                        is_allowed = True
+                        break
+                    # Also check parent dirs (run_path might be the tracked root itself)
+                    if os.path.abspath(external_root).startswith(run_path):
+                        is_allowed = True
+                        break
+
+            if not is_allowed:
                 self.send_json_response({
                     "ok": False,
                     "error": "Path is outside the allowed directory"
@@ -161,26 +275,47 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 })
                 return
 
-            # Check if there's a shinka.pid indicating an active run
+            # Kill any running processes for this run
+            # Search for processes with this run's results_dir in the command line
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-f", run_path],
+                    capture_output=True,
+                    text=True
+                )
+                if result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    for pid in pids:
+                        try:
+                            pid_int = int(pid)
+                            print(f"[SERVER] Killing process {pid_int} for run {run_id}")
+                            os.kill(pid_int, signal.SIGTERM)
+                        except (ValueError, ProcessLookupError, PermissionError) as e:
+                            print(f"[SERVER] Could not kill PID {pid}: {e}")
+            except Exception as e:
+                print(f"[SERVER] Error checking for running processes: {e}")
+
+            # Also check shinka.pid file
             pid_file = os.path.join(run_path, "shinka.pid")
             if os.path.exists(pid_file):
                 try:
                     with open(pid_file, "r") as f:
                         pid = int(f.read().strip())
-                    # Check if process is still running
-                    os.kill(pid, 0)  # Signal 0 just checks if process exists
-                    self.send_json_response({
-                        "ok": False,
-                        "error": f"Cannot delete: run is still active (PID {pid})"
-                    })
-                    return
+                    os.kill(pid, signal.SIGTERM)
+                    print(f"[SERVER] Killed process from shinka.pid: {pid}")
                 except (ValueError, ProcessLookupError, PermissionError):
-                    # PID file is stale or process is not running
                     pass
+
+            # Give processes time to die
+            import time
+            time.sleep(0.5)
 
             # Delete the directory
             print(f"[SERVER] Deleting directory: {run_path}")
             shutil.rmtree(run_path)
+
+            # Remove from launched_run_roots if present
+            launched_run_roots.discard(run_path)
 
             self.send_json_response({"ok": True})
             print(f"[SERVER] Successfully deleted: {run_path}")
@@ -189,6 +324,80 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"ok": False, "error": f"Invalid JSON: {e}"})
         except Exception as e:
             print(f"[SERVER] Error deleting run: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_evolution_run_stop(self):
+        """Stop a running evolution without deleting the directory."""
+        import signal
+        import subprocess
+
+        try:
+            # Read the request body
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+
+            run_id = data.get("run_id")
+            run_dir = data.get("run_dir")
+
+            print(f"[SERVER] Stop request for run_id={run_id}, run_dir={run_dir}")
+
+            if not run_dir:
+                self.send_json_response({"ok": False, "error": "No run_dir provided"})
+                return
+
+            # Resolve the path
+            run_path = os.path.abspath(run_dir)
+            killed_count = 0
+
+            # Kill any running processes for this run
+            # Search for processes with this run's results_dir in the command line
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-f", run_path],
+                    capture_output=True,
+                    text=True
+                )
+                if result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    for pid in pids:
+                        try:
+                            pid_int = int(pid)
+                            # Don't kill ourselves
+                            if pid_int == os.getpid():
+                                continue
+                            print(f"[SERVER] Killing process {pid_int} for run {run_id}")
+                            os.kill(pid_int, signal.SIGTERM)
+                            killed_count += 1
+                        except (ValueError, ProcessLookupError, PermissionError) as e:
+                            print(f"[SERVER] Could not kill PID {pid}: {e}")
+            except Exception as e:
+                print(f"[SERVER] Error checking for running processes: {e}")
+
+            # Also check shinka.pid file
+            pid_file = os.path.join(run_path, "shinka.pid")
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, "r") as f:
+                        pid = int(f.read().strip())
+                    if pid != os.getpid():
+                        os.kill(pid, signal.SIGTERM)
+                        print(f"[SERVER] Killed process from shinka.pid: {pid}")
+                        killed_count += 1
+                except (ValueError, ProcessLookupError, PermissionError) as e:
+                    print(f"[SERVER] Could not kill PID from shinka.pid: {e}")
+
+            self.send_json_response({
+                "ok": True,
+                "killed_processes": killed_count,
+                "message": f"Stopped {killed_count} process(es)" if killed_count > 0 else "No running processes found"
+            })
+            print(f"[SERVER] Successfully stopped run: {run_path} (killed {killed_count} processes)")
+
+        except json.JSONDecodeError as e:
+            self.send_json_response({"ok": False, "error": f"Invalid JSON: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error stopping run: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
 
     def handle_backend_bandit_status(self):
@@ -559,9 +768,103 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         
                         runs.append(run_info)
             
+            # Also scan launched run directories (external workspaces)
+            for external_run_dir in launched_run_roots:
+                db_path = os.path.join(external_run_dir, "evolution_db.sqlite")
+                if not os.path.exists(db_path):
+                    continue
+
+                # Extract task name and run name from path
+                # Path format: /tmp/ui_test2/results/shinka_ui_test2/ui-test-noembedding
+                parts = external_run_dir.rstrip("/").split("/")
+                run_name = parts[-1] if parts else "unknown"
+                task_name = parts[-2] if len(parts) >= 2 else "external"
+
+                run_info = {
+                    "run_id": run_name,
+                    "run_name": run_name,
+                    "run_dir": external_run_dir,
+                    "task": task_name,
+                    "status": "completed",
+                    "agent_type": "Unknown",
+                    "generations": 0,
+                    "start_time": None,
+                    "duration": None,
+                    "pid": None,
+                    "is_external": True,  # Mark as external workspace
+                }
+
+                # Check PID file
+                pid_path = os.path.join(external_run_dir, "shinka.pid")
+                if os.path.exists(pid_path):
+                    try:
+                        with open(pid_path, 'r') as f:
+                            pid = int(f.read().strip())
+                            run_info["pid"] = pid
+                            try:
+                                os.kill(pid, 0)
+                                run_info["status"] = "running"
+                            except (OSError, ProcessLookupError):
+                                pass
+                    except (ValueError, IOError):
+                        pass
+
+                # Get DB info
+                try:
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT MAX(generation) FROM programs")
+                    max_gen = cursor.fetchone()[0]
+                    if max_gen is not None:
+                        run_info["generations"] = max_gen + 1
+                    cursor.execute("""
+                        SELECT metadata FROM programs
+                        WHERE generation > 0 AND metadata IS NOT NULL LIMIT 1
+                    """)
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        try:
+                            meta = json.loads(row[0])
+                            run_info["agent_type"] = meta.get("agent_backend") or meta.get("patch_type", "Unknown")
+                        except:
+                            pass
+                    conn.close()
+                except Exception as e:
+                    print(f"[SERVER] Error reading external DB {db_path}: {e}")
+
+                # Get start time
+                try:
+                    hydra_config = os.path.join(external_run_dir, ".hydra", "config.yaml")
+                    if os.path.exists(hydra_config):
+                        run_info["start_time"] = os.path.getmtime(hydra_config)
+                    else:
+                        run_info["start_time"] = os.path.getmtime(external_run_dir)
+                except:
+                    pass
+
+                # Duration
+                if run_info["start_time"]:
+                    if run_info["status"] == "running":
+                        elapsed = now - run_info["start_time"]
+                    else:
+                        try:
+                            elapsed = os.path.getmtime(db_path) - run_info["start_time"]
+                        except:
+                            elapsed = 0
+                    hrs = int(elapsed // 3600)
+                    mins = int((elapsed % 3600) // 60)
+                    run_info["duration"] = f"{hrs}h {mins}m" if hrs > 0 else f"{mins}m"
+
+                if run_info["status"] == "running":
+                    run_info["active_sessions"] = self._get_active_sessions_for_run(external_run_dir, now)
+                else:
+                    run_info["active_sessions"] = []
+
+                runs.append(run_info)
+
             # Sort by start time, newest first
             runs.sort(key=lambda r: r.get("start_time") or 0, reverse=True)
-            
+
             print(f"[SERVER] Found {len(runs)} evolution runs")
             self.send_json_response({"runs": runs})
             
@@ -582,9 +885,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json_response({"jobs": []})
 
         try:
-            # Get the actual db path relative to search root
-            actual_db_path = self._get_actual_db_path(db_path)
-            run_dir = os.path.dirname(os.path.join(self.search_root, actual_db_path))
+            # Resolve the db_path to get the run directory (handles external workspaces)
+            abs_db_path = self._resolve_db_path(db_path)
+            run_dir = os.path.dirname(abs_db_path)
             run_dir_normalized = os.path.normpath(run_dir)
 
             active_jobs = []
@@ -1106,51 +1409,73 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         return active_sessions
 
     def handle_list_databases(self):
-        """Scan the search root directory for .db files."""
+        """Scan the search root directory and launched run directories for .db files."""
         print(
             f"[SERVER] Received request for database list, "
             f"searching in: {self.search_root}"
         )
         db_files = []
-        date_pattern = re.compile(r"_(\d{8}_\d{6})")
+        date_pattern = re.compile(r"(\d{4}\.\d{2}\.\d{2}\d{6})|_(\d{8}_\d{6})")
 
         # Get the task name from the search root directory name
         task_name = os.path.basename(self.search_root)
 
-        if os.path.exists(self.search_root):
-            print(f"[SERVER] Scanning for .db files in: {self.search_root}")
-            for root, _, files in os.walk(self.search_root):
+        # Helper to scan a directory and add databases
+        def scan_directory(search_dir: str, is_external: bool = False):
+            if not os.path.exists(search_dir):
+                return
+            print(f"[SERVER] Scanning for .db files in: {search_dir}")
+            for root, _, files in os.walk(search_dir):
                 for f in files:
                     if f.lower().endswith((".db", ".sqlite")):
                         full_path = os.path.join(root, f)
-                        client_path = os.path.relpath(full_path, self.search_root)
-                        display_name = f"{Path(f).stem} - {Path(client_path).parent}"
+
+                        if is_external:
+                            # For external workspaces, use @external: prefix with absolute path
+                            client_path = f"@external:{full_path}"
+                            # Extract workspace name and run name for display
+                            parts = full_path.split("/")
+                            if len(parts) >= 2:
+                                display_name = f"{parts[-3]}/{parts[-2]}" if len(parts) >= 3 else parts[-2]
+                            else:
+                                display_name = Path(full_path).parent.name
+                        else:
+                            client_path = os.path.relpath(full_path, search_dir)
+                            display_name = f"{Path(f).stem} - {Path(client_path).parent}"
 
                         # Extract date for sorting
                         sort_key = "0"  # Default for paths without a date
                         match = date_pattern.search(client_path)
                         if match:
-                            sort_key = match.group(1)
+                            sort_key = match.group(1) or match.group(2)
 
                         # Modify the path structure to include task name for proper organization
-                        # If the path doesn't already have 3+ parts, prepend the task name
-                        path_parts = client_path.split("/")
-                        if len(path_parts) < 3:
-                            # Add task name as the first part of the path
-                            modified_client_path = f"{task_name}/{client_path}"
+                        if not is_external:
+                            path_parts = client_path.split("/")
+                            if len(path_parts) < 3:
+                                modified_client_path = f"{task_name}/{client_path}"
+                            else:
+                                modified_client_path = client_path
                         else:
                             modified_client_path = client_path
 
                         db_info = {
                             "path": modified_client_path,
                             "name": display_name,
-                            "sort_key": sort_key,  # Add key for sorting
-                            "actual_path": client_path,  # Keep the actual relative path for file operations
+                            "sort_key": sort_key,
+                            "actual_path": client_path if not is_external else full_path,
                         }
                         db_files.append(db_info)
                         print(
                             f"[SERVER] Found DB: {client_path} -> {modified_client_path} (sort: {sort_key})"
                         )
+
+        # Scan main search root
+        scan_directory(self.search_root, is_external=False)
+
+        # Also scan any launched run directories (external workspaces)
+        for external_root in launched_run_roots:
+            scan_directory(external_root, is_external=True)
 
         if not db_files:
             print("[SERVER] No database files found in search directory.")
@@ -1166,7 +1491,15 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         print(f"[SERVER] Served DB list with {len(db_files)} entries, sorted by date.")
 
     def _get_actual_db_path(self, db_path: str) -> str:
-        """Convert a potentially modified db_path back to the actual file path."""
+        """Convert a potentially modified db_path back to the actual file path.
+
+        Returns a tuple of (is_absolute, path) where is_absolute indicates if
+        the path is an absolute path (from external workspace) or relative to search_root.
+        """
+        # Handle external workspace paths (absolute paths)
+        if db_path.startswith("@external:"):
+            return db_path[len("@external:"):]
+
         task_name = os.path.basename(self.search_root)
 
         # If the path starts with the task name, remove it
@@ -1175,13 +1508,20 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         return db_path
 
+    def _resolve_db_path(self, db_path: str) -> str:
+        """Resolve a db_path to an absolute file path."""
+        actual_path = self._get_actual_db_path(db_path)
+
+        # If it's already an absolute path (from external workspace), use it directly
+        if os.path.isabs(actual_path):
+            return actual_path
+
+        # Otherwise, it's relative to search_root
+        return os.path.join(self.search_root, actual_path)
+
     def handle_get_programs(self, db_path: str):
         """Fetch all programs from a given database file."""
         print(f"[SERVER] Fetching programs from DB: {db_path}")
-
-        # Handle the case where db_path might have the task name prepended
-        # Extract the actual path by removing the task name prefix if present
-        actual_db_path = self._get_actual_db_path(db_path)
 
         # Check cache first
         if db_path in db_cache:
@@ -1191,12 +1531,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response(cached_data)
                 return
 
-        # Construct absolute path to the database from search root using actual path
-        abs_db_path = os.path.join(self.search_root, actual_db_path)
+        # Resolve the db_path to an absolute path (handles both local and external workspaces)
+        abs_db_path = self._resolve_db_path(db_path)
         print(f"[SERVER] Absolute DB path: {abs_db_path} (from {db_path})")
 
         if not os.path.exists(abs_db_path):
-            self.send_error(404, f"Database file not found: {actual_db_path}")
+            self.send_error(404, f"Database file not found: {abs_db_path}")
             return
 
         # Retry logic for the reader with improved WAL mode support
@@ -1275,11 +1615,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         """List available meta_{gen}.txt files for a given database."""
         print(f"[SERVER] Listing meta files for DB: {db_path}")
 
-        # Get the actual database path
-        actual_db_path = self._get_actual_db_path(db_path)
-
-        # Get the directory containing the database file
-        abs_db_path = os.path.join(self.search_root, actual_db_path)
+        # Resolve the db_path to an absolute path (handles external workspaces)
+        abs_db_path = self._resolve_db_path(db_path)
         db_dir = os.path.dirname(abs_db_path)
 
         if not os.path.exists(db_dir):
@@ -1323,11 +1660,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             f"generation: {generation}"
         )
 
-        # Get the actual database path
-        actual_db_path = self._get_actual_db_path(db_path)
-
-        # Get the directory containing the database file
-        abs_db_path = os.path.join(self.search_root, actual_db_path)
+        # Resolve the db_path to an absolute path (handles external workspaces)
+        abs_db_path = self._resolve_db_path(db_path)
         db_dir = os.path.dirname(abs_db_path)
 
         # Construct the meta file path
@@ -1363,11 +1697,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             f"[SERVER] PDF download request for DB: {db_path}, generation: {generation}"
         )
 
-        # Get the actual database path
-        actual_db_path = self._get_actual_db_path(db_path)
-
-        # Get the directory containing the database file
-        abs_db_path = os.path.join(self.search_root, actual_db_path)
+        # Resolve the db_path to an absolute path (handles external workspaces)
+        abs_db_path = self._resolve_db_path(db_path)
         db_dir = os.path.dirname(abs_db_path)
 
         # Construct the meta file path
@@ -1756,6 +2087,1341 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[SERVER] Could not load logo: {e}")
         return ""
+
+    # ========== New Run Feature Handlers ==========
+
+    def _read_json_body(self) -> Dict[str, Any]:
+        """Read and parse JSON request body."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        return json.loads(body.decode("utf-8"))
+
+    def handle_credentials_check(self):
+        """Check which LLM providers have valid credentials."""
+        try:
+            checker = CredentialChecker()
+            result = checker.check_all()
+            self.send_json_response({"ok": True, "credentials": result})
+        except Exception as e:
+            print(f"[SERVER] Error checking credentials: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_presets_list(self):
+        """List all available presets."""
+        try:
+            manager = PresetManager()
+            presets = manager.list_presets()
+            self.send_json_response({"ok": True, "presets": presets})
+        except Exception as e:
+            print(f"[SERVER] Error listing presets: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_preset_get(self, preset_id: str):
+        """Get a specific preset by ID."""
+        try:
+            manager = PresetManager()
+            preset = manager.get_preset(preset_id)
+            if preset:
+                from dataclasses import asdict
+                self.send_json_response({"ok": True, "preset": asdict(preset)})
+            else:
+                self.send_json_response({"ok": False, "error": "Preset not found"})
+        except Exception as e:
+            print(f"[SERVER] Error getting preset: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_preset_save(self):
+        """Save a new preset."""
+        try:
+            data = self._read_json_body()
+            manager = PresetManager()
+            preset = manager.save_preset(
+                name=data.get("name", "Unnamed Preset"),
+                config=data.get("config", {}),
+                description=data.get("description", ""),
+                preset_id=data.get("id"),
+            )
+            from dataclasses import asdict
+            self.send_json_response({"ok": True, "preset": asdict(preset)})
+        except Exception as e:
+            print(f"[SERVER] Error saving preset: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_preset_delete(self, preset_id: str):
+        """Delete a preset."""
+        try:
+            manager = PresetManager()
+            deleted = manager.delete_preset(preset_id)
+            self.send_json_response({"ok": True, "deleted": deleted})
+        except Exception as e:
+            print(f"[SERVER] Error deleting preset: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_config_defaults(self):
+        """Return default configuration values for the UI form."""
+        try:
+            from dataclasses import asdict
+            defaults = asdict(UIRunConfig())
+            self.send_json_response({"ok": True, "defaults": defaults})
+        except Exception as e:
+            print(f"[SERVER] Error getting config defaults: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_browse_folders(self, query: Dict[str, Any]):
+        """Browse filesystem folders for the folder picker."""
+        try:
+            import os
+            from pathlib import Path
+
+            # Get the requested path, default to home directory
+            requested_path = query.get("path", [""])[0]
+            if not requested_path:
+                requested_path = str(Path.home())
+
+            current_path = Path(requested_path).resolve()
+
+            # Security: don't allow browsing system directories
+            blocked_prefixes = ["/System", "/Library", "/bin", "/sbin", "/usr", "/private/var"]
+            if any(str(current_path).startswith(prefix) for prefix in blocked_prefixes):
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Access to system directories is not allowed"
+                })
+                return
+
+            if not current_path.exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Path does not exist: {current_path}"
+                })
+                return
+
+            if not current_path.is_dir():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Path is not a directory: {current_path}"
+                })
+                return
+
+            # Get subdirectories (not files)
+            folders = []
+            try:
+                for entry in sorted(current_path.iterdir()):
+                    if entry.is_dir() and not entry.name.startswith('.'):
+                        try:
+                            # Check if we can access it
+                            list(entry.iterdir())
+                            folders.append({
+                                "name": entry.name,
+                                "path": str(entry),
+                            })
+                        except PermissionError:
+                            # Skip inaccessible directories
+                            pass
+            except PermissionError:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Permission denied: {current_path}"
+                })
+                return
+
+            # Compute parent path
+            parent_path = str(current_path.parent) if current_path.parent != current_path else None
+
+            # Quick access locations
+            home = Path.home()
+            quick_access = [
+                {"name": "Home", "path": str(home)},
+                {"name": "Desktop", "path": str(home / "Desktop")},
+                {"name": "Documents", "path": str(home / "Documents")},
+            ]
+            # Add workspace if it exists
+            workspace = home / "workspace"
+            if workspace.exists():
+                quick_access.append({"name": "Workspace", "path": str(workspace)})
+            # Add /tmp
+            quick_access.append({"name": "Temp (/tmp)", "path": "/tmp"})
+
+            self.send_json_response({
+                "ok": True,
+                "current_path": str(current_path),
+                "parent_path": parent_path,
+                "folders": folders,
+                "quick_access": quick_access,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error browsing folders: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_folder_picker_native(self, query: Dict[str, Any]):
+        """Open native OS folder picker dialog using platform-specific methods."""
+        import subprocess
+        import platform
+        from pathlib import Path
+
+        initial_dir_list = query.get("initial_dir", [""])
+        initial_dir = initial_dir_list[0] if initial_dir_list else ""
+        if not initial_dir:
+            initial_dir = str(Path.home())
+
+        # Ensure initial_dir exists, otherwise use home
+        if not Path(initial_dir).exists():
+            initial_dir = str(Path.home())
+
+        system = platform.system()
+
+        try:
+            if system == "Darwin":  # macOS
+                # Use osascript (AppleScript) for native macOS folder dialog
+                script = f'''
+                    set defaultPath to POSIX file "{initial_dir}"
+                    try
+                        set selectedFolder to choose folder with prompt "Select Project Folder" default location defaultPath
+                        return POSIX path of selectedFolder
+                    on error
+                        return ""
+                    end try
+                '''
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                folder = result.stdout.strip()
+                if folder:
+                    # Remove trailing slash if present
+                    folder = folder.rstrip("/")
+                    self.send_json_response({"ok": True, "path": folder})
+                else:
+                    # User cancelled or error
+                    self.send_json_response({"ok": True, "path": None})
+
+            elif system == "Windows":
+                # Use PowerShell for native Windows folder dialog
+                ps_script = f'''
+                Add-Type -AssemblyName System.Windows.Forms
+                $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+                $dialog.Description = "Select Project Folder"
+                $dialog.SelectedPath = "{initial_dir}"
+                $dialog.ShowNewFolderButton = $true
+                if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+                    Write-Output $dialog.SelectedPath
+                }}
+                '''
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                folder = result.stdout.strip()
+                if folder:
+                    self.send_json_response({"ok": True, "path": folder})
+                else:
+                    self.send_json_response({"ok": True, "path": None})
+
+            elif system == "Linux":
+                # Try zenity first (common on GNOME), then kdialog (KDE), then fallback
+                folder = None
+
+                # Try zenity
+                try:
+                    result = subprocess.run(
+                        ["zenity", "--file-selection", "--directory",
+                         "--title=Select Project Folder",
+                         f"--filename={initial_dir}/"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        folder = result.stdout.strip()
+                except FileNotFoundError:
+                    pass
+
+                # Try kdialog if zenity not available
+                if folder is None:
+                    try:
+                        result = subprocess.run(
+                            ["kdialog", "--getexistingdirectory", initial_dir,
+                             "--title", "Select Project Folder"],
+                            capture_output=True,
+                            text=True,
+                            timeout=120
+                        )
+                        if result.returncode == 0:
+                            folder = result.stdout.strip()
+                    except FileNotFoundError:
+                        pass
+
+                if folder:
+                    self.send_json_response({"ok": True, "path": folder})
+                elif folder == "":
+                    # User cancelled
+                    self.send_json_response({"ok": True, "path": None})
+                else:
+                    # No dialog tool available, fallback to custom browser
+                    self.send_json_response({
+                        "ok": False,
+                        "error": "No native dialog available (install zenity or kdialog)",
+                        "fallback": True
+                    })
+            else:
+                # Unknown platform, fallback
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Unsupported platform: {system}",
+                    "fallback": True
+                })
+
+        except subprocess.TimeoutExpired:
+            self.send_json_response({"ok": False, "error": "Dialog timed out", "fallback": True})
+        except Exception as e:
+            print(f"[SERVER] Error in native folder picker: {e}")
+            self.send_json_response({"ok": False, "error": str(e), "fallback": True})
+
+    def handle_git_prepare(self):
+        """Prepare a git workspace (clone or worktree)."""
+        try:
+            data = self._read_json_body()
+            git_url = data.get("git_url")
+            branch = data.get("branch", "main")
+            use_worktree = data.get("use_worktree", True)
+            workspace_name = data.get("workspace_name")
+
+            if not git_url:
+                self.send_json_response({"ok": False, "error": "git_url is required"})
+                return
+
+            manager = GitWorktreeManager()
+            info = manager.prepare_workspace(
+                git_url=git_url,
+                branch=branch,
+                use_worktree=use_worktree,
+                workspace_name=workspace_name,
+            )
+
+            self.send_json_response({
+                "ok": True,
+                "workspace_path": str(info.path),
+                "commit_sha": info.commit_sha,
+                "is_worktree": info.is_worktree,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error preparing git workspace: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    # ========== CLI Config Handlers ==========
+
+    def handle_cli_config_get(self, provider: str):
+        """Get CLI configuration for a provider."""
+        try:
+            manager = get_cli_config_manager(provider)
+            if manager is None:
+                # ShinkaAgent doesn't have external CLI config
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "system_prompt": None,
+                    "mcp_servers": [],
+                    "allowed_tools": None,
+                    "extra_config": {},
+                    "supports_mcp": False,
+                    "supports_allowed_tools": False,
+                })
+                return
+
+            config = manager.load_config()
+            self.send_json_response({
+                "ok": True,
+                "provider": provider,
+                "system_prompt": config.system_prompt,
+                "mcp_servers": [s.to_dict() for s in config.mcp_servers],
+                "allowed_tools": config.allowed_tools,
+                "extra_config": config.extra_config,
+                "supports_mcp": provider in ("gemini", "claude"),
+                "supports_allowed_tools": provider == "claude",
+            })
+        except Exception as e:
+            print(f"[SERVER] Error loading CLI config for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_save(self, provider: str):
+        """Save CLI configuration for a provider."""
+        try:
+            data = self._read_json_body()
+            manager = get_cli_config_manager(provider)
+
+            if manager is None:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Provider {provider} does not support CLI configuration"
+                })
+                return
+
+            # Parse MCP servers from request
+            mcp_servers = []
+            for s in data.get("mcp_servers", []):
+                mcp_servers.append(MCPServer(
+                    name=s.get("name", ""),
+                    command=s.get("command", ""),
+                    args=s.get("args", []),
+                    env=s.get("env"),
+                ))
+
+            config = CLIConfig(
+                system_prompt=data.get("system_prompt"),
+                mcp_servers=mcp_servers,
+                allowed_tools=data.get("allowed_tools"),
+                extra_config=data.get("extra_config", {}),
+            )
+
+            manager.save_config(config)
+            self.send_json_response({"ok": True})
+        except Exception as e:
+            print(f"[SERVER] Error saving CLI config for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_mcp_list(self, provider: str):
+        """List MCP servers for a provider."""
+        try:
+            manager = get_cli_config_manager(provider)
+            if manager is None or provider not in ("gemini", "claude"):
+                self.send_json_response({
+                    "ok": True,
+                    "mcp_servers": [],
+                    "supports_mcp": False,
+                })
+                return
+
+            config = manager.load_config()
+            self.send_json_response({
+                "ok": True,
+                "mcp_servers": [s.to_dict() for s in config.mcp_servers],
+                "supports_mcp": True,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error listing MCP servers for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_mcp_add(self, provider: str):
+        """Add an MCP server for a provider."""
+        try:
+            data = self._read_json_body()
+            manager = get_cli_config_manager(provider)
+
+            if manager is None or provider not in ("gemini", "claude"):
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Provider {provider} does not support MCP servers"
+                })
+                return
+
+            server = MCPServer(
+                name=data.get("name", ""),
+                command=data.get("command", ""),
+                args=data.get("args", []),
+                env=data.get("env"),
+            )
+
+            if not server.name or not server.command:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "MCP server name and command are required"
+                })
+                return
+
+            manager.add_mcp_server(server)
+            self.send_json_response({"ok": True})
+        except Exception as e:
+            print(f"[SERVER] Error adding MCP server for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_mcp_delete(self, provider: str, mcp_name: str):
+        """Delete an MCP server for a provider."""
+        try:
+            manager = get_cli_config_manager(provider)
+
+            if manager is None or provider not in ("gemini", "claude"):
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Provider {provider} does not support MCP servers"
+                })
+                return
+
+            # URL decode the MCP name
+            mcp_name = urllib.parse.unquote(mcp_name)
+            removed = manager.remove_mcp_server(mcp_name)
+
+            if removed:
+                self.send_json_response({"ok": True})
+            else:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"MCP server '{mcp_name}' not found"
+                })
+        except Exception as e:
+            print(f"[SERVER] Error deleting MCP server for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_profiles_list(self, provider: str):
+        """List available profiles for a provider."""
+        try:
+            # Get the selected profile manager
+            selected_mgr = get_selected_profiles_manager()
+            selected = selected_mgr.get_selected(provider)
+
+            if provider == "codex":
+                manager = CodexProfileManager()
+                profiles = manager.list_profiles()
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "profiles": profiles,
+                    "selected": selected.get("profile", "default"),
+                    "sandbox": selected.get("sandbox", "workspace-write"),
+                })
+            elif provider == "gemini":
+                manager = GeminiConfigManager()
+                system_prompts = manager.list_system_prompts()
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "system_prompts": system_prompts,
+                    "selected_system_prompt": selected.get("system_prompt_file"),
+                    "sandbox_disabled": selected.get("sandbox_disabled", False),
+                })
+            elif provider == "claude":
+                # Claude doesn't have native profiles yet
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "profiles": [],
+                    "skip_permissions": selected.get("skip_permissions", True),
+                })
+            else:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Unknown provider: {provider}"
+                })
+        except Exception as e:
+            print(f"[SERVER] Error listing profiles for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_profiles_update(self, provider: str):
+        """Update selected profile for a provider."""
+        try:
+            data = self._read_json_body()
+            selected_mgr = get_selected_profiles_manager()
+
+            if provider == "codex":
+                selection = {
+                    "profile": data.get("profile", "default"),
+                    "sandbox": data.get("sandbox", "workspace-write"),
+                }
+            elif provider == "gemini":
+                selection = {
+                    "system_prompt_file": data.get("system_prompt_file"),
+                    "sandbox_disabled": data.get("sandbox_disabled", False),
+                }
+                # If creating a new system prompt
+                if data.get("create_system_prompt"):
+                    name = data.get("new_prompt_name", "custom")
+                    content = data.get("new_prompt_content", "")
+                    manager = GeminiConfigManager()
+                    path = manager.create_system_prompt(name, content)
+                    selection["system_prompt_file"] = path
+            elif provider == "claude":
+                selection = {
+                    "skip_permissions": data.get("skip_permissions", True),
+                }
+            else:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Unknown provider: {provider}"
+                })
+                return
+
+            selected_mgr.set_selected(provider, selection)
+            self.send_json_response({"ok": True, "selection": selection})
+        except Exception as e:
+            print(f"[SERVER] Error updating profile for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    # ========== End CLI Config Handlers ==========
+
+    # ========== Workspace Diff & Patch Handlers ==========
+
+    def handle_workspace_diff(self, query: Dict[str, Any]):
+        """Get diff from original for a program in an isolated workspace.
+
+        Query params:
+            db_path: Path to the evolution database
+            program_id: (optional) ID of the program to diff. If not provided,
+                       returns diff for all uncommitted changes.
+            from_original: (optional) If "true", diff from initial commit.
+                          Otherwise diff from parent commit.
+        """
+        import subprocess
+
+        try:
+            db_path = query.get("db_path", [""])[0]
+            program_id = query.get("program_id", [""])[0]
+            from_original = query.get("from_original", ["true"])[0].lower() == "true"
+
+            # Resolve the database path
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Database not found: {db_path}"
+                })
+                return
+
+            # Workspace is in the same directory as the database
+            results_dir = Path(abs_db_path).parent
+            workspace_path = results_dir / "workspace"
+
+            if not workspace_path.exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No isolated workspace found for this run"
+                })
+                return
+
+            git_dir = workspace_path / ".git"
+            if not git_dir.exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Workspace is not a git repository"
+                })
+                return
+
+            # Get the commit SHA for the program if specified
+            target_commit = "HEAD"
+            if program_id:
+                # Look up the program's commit_sha from the database
+                con = sqlite3.connect(abs_db_path)
+                cur = con.cursor()
+                cur.execute("SELECT metadata FROM programs WHERE id = ?", (program_id,))
+                row = cur.fetchone()
+                con.close()
+
+                if row and row[0]:
+                    import json
+                    metadata = json.loads(row[0])
+                    if "commit_sha" in metadata:
+                        target_commit = metadata["commit_sha"]
+
+            if from_original:
+                # Get the first commit (initial state)
+                result = subprocess.run(
+                    ["git", "rev-list", "--max-parents=0", "HEAD"],
+                    cwd=workspace_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    self.send_json_response({
+                        "ok": False,
+                        "error": "Failed to find initial commit"
+                    })
+                    return
+                first_commit = result.stdout.strip().split('\n')[0]
+
+                # Get diff from first commit to target
+                result = subprocess.run(
+                    ["git", "diff", first_commit, target_commit],
+                    cwd=workspace_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            else:
+                # Diff from parent commit
+                result = subprocess.run(
+                    ["git", "diff", f"{target_commit}^", target_commit],
+                    cwd=workspace_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+
+            diff_text = result.stdout
+            self.send_json_response({
+                "ok": True,
+                "diff": diff_text,
+                "workspace_path": str(workspace_path),
+                "target_commit": target_commit,
+                "from_original": from_original,
+            })
+
+        except subprocess.SubprocessError as e:
+            self.send_json_response({"ok": False, "error": f"Git error: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error getting workspace diff: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_export_patch(self, query: Dict[str, Any]):
+        """Export a patch file for a program's changes.
+
+        Query params:
+            db_path: Path to the evolution database
+            program_id: ID of the program to export patch for
+        """
+        import subprocess
+        import tempfile
+
+        try:
+            db_path = query.get("db_path", [""])[0]
+            program_id = query.get("program_id", [""])[0]
+
+            if not program_id:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "program_id is required"
+                })
+                return
+
+            # Resolve the database path
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Database not found: {db_path}"
+                })
+                return
+
+            # Workspace is in the same directory as the database
+            results_dir = Path(abs_db_path).parent
+            workspace_path = results_dir / "workspace"
+
+            if not workspace_path.exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No isolated workspace found for this run"
+                })
+                return
+
+            # Look up the program's commit_sha from the database
+            con = sqlite3.connect(abs_db_path)
+            cur = con.cursor()
+            cur.execute("SELECT metadata, generation FROM programs WHERE id = ?", (program_id,))
+            row = cur.fetchone()
+            con.close()
+
+            if not row:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Program not found: {program_id}"
+                })
+                return
+
+            metadata_str, generation = row
+            commit_sha = None
+            if metadata_str:
+                import json
+                metadata = json.loads(metadata_str)
+                commit_sha = metadata.get("commit_sha")
+
+            if not commit_sha:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Program does not have a commit SHA (may not be from isolated workspace)"
+                })
+                return
+
+            # Get the first commit for diffing
+            result = subprocess.run(
+                ["git", "rev-list", "--max-parents=0", "HEAD"],
+                cwd=workspace_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            first_commit = result.stdout.strip().split('\n')[0]
+
+            # Generate the diff as a patch
+            result = subprocess.run(
+                ["git", "diff", first_commit, commit_sha],
+                cwd=workspace_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            patch_content = result.stdout
+
+            # Create a header for the patch
+            patch_header = f"""# Shinka Evolution Patch
+# Program ID: {program_id}
+# Generation: {generation}
+# Commit: {commit_sha}
+# Generated from isolated workspace
+#
+# To apply this patch:
+#   git apply evolution_patch.patch
+#
+# Or for a three-way merge:
+#   git apply --3way evolution_patch.patch
+#
+"""
+            full_patch = patch_header + patch_content
+
+            # Send as downloadable file
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Disposition", f'attachment; filename="evolution_gen{generation}_{program_id[:8]}.patch"')
+            self.send_header("Content-Length", str(len(full_patch.encode('utf-8'))))
+            self.end_headers()
+            self.wfile.write(full_patch.encode('utf-8'))
+
+        except subprocess.SubprocessError as e:
+            self.send_json_response({"ok": False, "error": f"Git error: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error exporting patch: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    # ========== End Workspace Diff & Patch Handlers ==========
+
+    def handle_evolution_run_validate(self):
+        """Validate run configuration without starting."""
+        try:
+            data = self._read_json_body()
+            flat = flatten_nested_config(data)
+            ui_config = UIRunConfig(**flat)
+            
+            # ... (rest of validation logic stays same, using flattened config for consistent validation)
+            # Basic field validation
+            errors = []
+            warnings = []
+
+            # Validate local path exists
+            if ui_config.source_type == "local":
+                path = Path(ui_config.local_path)
+                if not path.exists():
+                    errors.append({
+                        "field": "codebase.local_path",
+                        "message": f"Path does not exist: {ui_config.local_path}",
+                    })
+                elif not path.is_dir():
+                    errors.append({
+                        "field": "codebase.local_path",
+                        "message": f"Path is not a directory: {ui_config.local_path}",
+                    })
+                # Optional: validate init_program_path if provided
+                if ui_config.init_program_path:
+                    init_path = path / ui_config.init_program_path if not Path(ui_config.init_program_path).is_absolute() else Path(ui_config.init_program_path)
+                    # Only enforce existence if NOT in agentic mode
+                    if not init_path.exists() and not ui_config.agentic_mode:
+                        errors.append({
+                            "field": "agent.init_program_path",
+                            "message": f"Initial program path does not exist: {init_path}",
+                        })
+
+            # Validate git URL
+            if ui_config.source_type == "git":
+                if not ui_config.git_url:
+                    errors.append({
+                        "field": "codebase.git_url",
+                        "message": "Git URL is required",
+                    })
+
+            # Check credentials for requested models
+            checker = CredentialChecker()
+            validation = checker.validate_models(ui_config.llm_models)
+            if not validation["valid"]:
+                for provider in validation["missing_providers"]:
+                    errors.append({
+                        "field": "agent.llm_models",
+                        "message": f"{provider} credentials not configured",
+                    })
+
+            # Warnings
+            if ui_config.agent_max_turns > 100:
+                warnings.append({
+                    "field": "agent.max_turns",
+                    "message": "High turn count may significantly increase costs",
+                })
+
+            if ui_config.num_generations > 100:
+                warnings.append({
+                    "field": "run.num_generations",
+                    "message": "Large number of generations will take a long time",
+                })
+
+            self.send_json_response({
+                "ok": True,
+                "valid": len(errors) == 0,
+                "errors": errors,
+                "warnings": warnings,
+                "credentials": checker.check_all(),
+            })
+        except Exception as e:
+            print(f"[SERVER] Error validating config: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_evolution_run_export(self):
+        """Export run configuration as a CLI command."""
+        try:
+            data = self._read_json_body()
+            flat = flatten_nested_config(data)
+            ui_config = UIRunConfig(**flat)
+
+            # Start building command
+            cmd_parts = ["uv", "run", "shinka_launch"]
+
+            # Map Agent settings
+            if ui_config.agentic_mode:
+                cmd_parts.append("evo_config.agentic_mode=true")
+                cmd_parts.append(f"evo_config.agentic.backend={ui_config.agent_backend}")
+                cmd_parts.append(f"evo_config.agentic.sandbox={ui_config.agent_sandbox}")
+                cmd_parts.append(f"evo_config.agentic.max_turns={ui_config.agent_max_turns}")
+                if ui_config.agent_max_seconds > 0:
+                    cmd_parts.append(f"evo_config.agentic.max_seconds={ui_config.agent_max_seconds}")
+                if ui_config.llm_models:
+                    # Hydra list syntax: "[a,b]"
+                    models_str = ",".join(ui_config.llm_models)
+                    cmd_parts.append(f"evo_config.llm_models='[{models_str}]'")
+            else:
+                 cmd_parts.append("evo_config.agentic_mode=false")
+
+            # Task Prompt (Agent Instruction)
+            if ui_config.task_sys_msg:
+                # Escape single quotes for shell (' -> '\'')
+                escaped = ui_config.task_sys_msg.replace("'", "'\\''")
+                cmd_parts.append(f"evo_config.task_sys_msg='{escaped}'")
+
+            # Evaluator settings
+            cmd_parts.append(f"evo_config.evaluator.mode={ui_config.evaluator_mode}")
+            if ui_config.evaluator_mode == "agentic":
+                # Only if using agentic evaluator
+                cmd_parts.append(f"evo_config.evaluator.agentic.backend={ui_config.eval_backend}")
+                cmd_parts.append(f"evo_config.evaluator.agentic.max_turns={ui_config.eval_max_turns}")
+                if ui_config.eval_prompt:
+                     escaped_eval = ui_config.eval_prompt.replace("'", "'\\''")
+                     cmd_parts.append(f"evo_config.evaluator.agentic.eval_prompt='{escaped_eval}'")
+            
+            # Run settings
+            cmd_parts.append(f"evo_config.num_generations={ui_config.num_generations}")
+            cmd_parts.append(f"evo_config.max_parallel_jobs={ui_config.max_parallel_jobs}")
+            
+            # Database settings
+            cmd_parts.append(f"db_config.num_islands={ui_config.num_islands}")
+            cmd_parts.append(f"db_config.archive_size={ui_config.archive_size}")
+            cmd_parts.append(f"db_config.migration_interval={ui_config.migration_interval}")
+            cmd_parts.append(f"db_config.migration_rate={ui_config.migration_rate}")
+            cmd_parts.append(f"db_config.island_elitism={str(ui_config.island_elitism).lower()}")
+
+            # Path settings
+            # Note: For local path, users typically run from the root, so we use the relative path 
+            # if it's inside, or absolute if outside. The UI passes absolute.
+            if ui_config.init_program_path:
+                cmd_parts.append(f"evo_config.init_program_path={ui_config.init_program_path}")
+            else:
+                cmd_parts.append("evo_config.init_program_path=null")
+            if ui_config.init_support_dir:
+                 cmd_parts.append(f"evo_config.init_support_dir={ui_config.init_support_dir}")
+
+            # Job settings
+            cmd_parts.append(f"evo_config.job_type={ui_config.job_type}")
+            
+            # Run Name
+            if ui_config.run_name:
+                cmd_parts.append(f"run_name={ui_config.run_name}")
+            # Eval program path (allow empty to mean agent-only eval)
+            if ui_config.eval_program_path:
+                cmd_parts.append(f"job_config.eval_program_path={ui_config.eval_program_path}")
+            else:
+                cmd_parts.append("job_config.eval_program_path=null")
+
+            command = " ".join(cmd_parts)
+
+            self.send_json_response({
+                "ok": True,
+                "command": command,
+                "message": "Command generated successfully"
+            })
+        except Exception as e:
+            print(f"[SERVER] Error exporting config: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_evolution_run_start(self):
+        """Start a new evolution run."""
+        try:
+            data = self._read_json_body()
+            flat = flatten_nested_config(data)
+            ui_config = UIRunConfig(**flat)
+
+            # Handle workspace setup based on source type and isolation setting
+            workspace_path = None
+            original_source_path = None  # Track original for reference
+            pre_computed_results_dir = None  # Set when using isolated workspace
+            manager = None  # Only create when needed for git operations
+
+            # For isolated local workspaces, determine final run name BEFORE creating workspace
+            # This handles auto-increment of run names if a previous run exists
+            final_run_name = None
+            if ui_config.source_type == "local" and ui_config.use_worktree:
+                original_source_path = Path(ui_config.local_path).resolve()
+                base_run_name = ui_config.run_name or "evolution_run"
+                base_run_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in base_run_name)
+
+                # Check for existing runs and auto-increment if needed
+                run_name = base_run_name
+                suffix = 2
+                while True:
+                    candidate_results_dir = original_source_path / "results" / f"shinka_{original_source_path.name}" / run_name
+                    candidate_db = candidate_results_dir / "evolution_db.sqlite"
+
+                    if not candidate_db.exists():
+                        break  # No existing DB, use this name
+
+                    # Check if existing DB has programs
+                    try:
+                        con = sqlite3.connect(candidate_db)
+                        cur = con.cursor()
+                        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
+                        has_table = cur.fetchone() is not None
+                        row_count = 0
+                        if has_table:
+                            cur.execute("SELECT COUNT(*) FROM programs")
+                            row_count = cur.fetchone()[0]
+                        con.close()
+
+                        if row_count == 0:
+                            break  # Empty DB, safe to reuse
+
+                        # Has programs - try next suffix
+                        print(f"[SERVER] Run '{run_name}' exists with {row_count} programs, trying {base_run_name}-{suffix}")
+                        run_name = f"{base_run_name}-{suffix}"
+                        suffix += 1
+                    except sqlite3.DatabaseError:
+                        # Corrupted DB - try next suffix
+                        print(f"[SERVER] Run '{run_name}' has corrupted DB, trying {base_run_name}-{suffix}")
+                        run_name = f"{base_run_name}-{suffix}"
+                        suffix += 1
+
+                final_run_name = run_name
+                print(f"[SERVER] Final run name for isolated workspace: {final_run_name}")
+
+            if ui_config.source_type == "git":
+                # Git source - clone to local path if provided, otherwise use temp dir
+                # The local_path field specifies where to store results (and clone the repo)
+                manager = GitWorktreeManager()  # Create manager for git operations
+
+                if ui_config.local_path:
+                    # User specified a local path - clone there
+                    local_results_root = Path(ui_config.local_path).resolve()
+                    base_run_name = ui_config.run_name or "evolution_run"
+                    base_run_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in base_run_name)
+
+                    # Auto-increment run name if needed
+                    run_name = base_run_name
+                    suffix = 2
+                    while True:
+                        candidate_results_dir = local_results_root / "results" / f"shinka_git" / run_name
+                        candidate_db = candidate_results_dir / "evolution_db.sqlite"
+                        if not candidate_db.exists():
+                            break
+                        try:
+                            con = sqlite3.connect(candidate_db)
+                            cur = con.cursor()
+                            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
+                            has_table = cur.fetchone() is not None
+                            row_count = 0
+                            if has_table:
+                                cur.execute("SELECT COUNT(*) FROM programs")
+                                row_count = cur.fetchone()[0]
+                            con.close()
+                            if row_count == 0:
+                                break
+                            run_name = f"{base_run_name}-{suffix}"
+                            suffix += 1
+                        except sqlite3.DatabaseError:
+                            run_name = f"{base_run_name}-{suffix}"
+                            suffix += 1
+
+                    final_run_name = run_name
+                    pre_computed_results_dir = local_results_root / "results" / f"shinka_git" / final_run_name
+                    git_workspace_path = pre_computed_results_dir / "workspace"
+
+                    print(f"[SERVER] Cloning git repo to local path: {git_workspace_path}")
+
+                    # Clone/worktree to the specified location
+                    info = manager.prepare_workspace(
+                        git_url=ui_config.git_url,
+                        branch=ui_config.git_branch,
+                        use_worktree=ui_config.use_worktree,
+                        workspace_name=str(git_workspace_path),
+                    )
+                    workspace_path = info.path
+                    original_source_path = ui_config.git_url
+                else:
+                    # No local path - use temp directory (legacy behavior)
+                    print(f"[SERVER] No local path specified, cloning git repo to temp directory")
+                    info = manager.prepare_workspace(
+                        git_url=ui_config.git_url,
+                        branch=ui_config.git_branch,
+                        use_worktree=ui_config.use_worktree,
+                    )
+                    workspace_path = info.path
+                    original_source_path = ui_config.git_url
+                    pre_computed_results_dir = None
+            else:
+                # Local path source
+                if original_source_path is None:
+                    original_source_path = Path(ui_config.local_path).resolve()
+
+                if ui_config.use_worktree:
+                    # Create isolated workspace copy using the final run name
+                    manager = GitWorktreeManager()  # Create manager for git operations
+                    pre_computed_results_dir = original_source_path / "results" / f"shinka_{original_source_path.name}" / final_run_name
+                    isolated_workspace_path = pre_computed_results_dir / "workspace"
+
+                    print(f"[SERVER] Creating isolated workspace from {original_source_path}")
+                    print(f"[SERVER] Isolated workspace location: {isolated_workspace_path}")
+
+                    info = manager.create_local_copy(
+                        source_path=original_source_path,
+                        target_path=isolated_workspace_path,
+                    )
+                    workspace_path = info.path
+                    print(f"[SERVER] Isolated workspace created with initial commit: {info.commit_sha[:8]}")
+                else:
+                    # No isolation - use original path directly (no git needed)
+                    workspace_path = original_source_path
+                    print(f"[SERVER] Using original path directly (no isolation): {workspace_path}")
+
+            # Build configs
+            builder = RunConfigBuilder(ui_config, workspace_path)
+            evo_config = builder.build_evolution_config()
+            db_config = builder.build_database_config()
+            job_config = builder.build_job_config()
+            results_dir = builder.get_results_dir()
+
+            # If agentic and the user did not supply a real seed/eval script, allow empty
+            if (
+                evo_config.agentic_mode
+                and evo_config.init_program_path
+                and not Path(evo_config.init_program_path).exists()
+            ):
+                print(f"[SERVER] init_program_path not found, clearing for agentic run: {evo_config.init_program_path}")
+                evo_config.init_program_path = ""
+            if (
+                evo_config.evaluator.mode == "agentic"
+                and job_config.eval_program_path
+                # Check in TARGET workspace, not server dir - eval script must exist there
+                and not (workspace_path / job_config.eval_program_path).exists()
+            ):
+                print(f"[SERVER] eval_program_path not found in workspace, clearing for agentic eval: {job_config.eval_program_path}")
+                job_config.eval_program_path = ""
+                ui_config.eval_program_path = ""  # Also clear ui_config so overrides use null
+
+            # Update results_dir in evo_config
+            evo_config.results_dir = str(results_dir)
+
+            # Build the CLI command to launch the evolution
+            # This runs it as a subprocess so signal handlers work
+            import subprocess
+            import os
+
+            # Hydra CLI expects: base_configs then ++overrides
+            cmd_parts = [
+                "uv", "run", "shinka_launch",
+                # Base config - use agentic evolution with ui_custom task (nulls out Hydra defaults)
+                "evolution=agentic",
+                "task@_global_=ui_custom",
+            ]
+
+            # Determine run name and target results directory
+            # For isolated local workspaces, this was already computed before creating workspace
+            if final_run_name and pre_computed_results_dir:
+                run_name = final_run_name
+                target_results_dir = pre_computed_results_dir
+            else:
+                # Non-isolated or git source - compute now with auto-increment
+                base_run_name = ui_config.run_name or results_dir.name
+                base_run_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in base_run_name)
+
+                run_name = base_run_name
+                suffix = 2
+                while True:
+                    target_results_dir = workspace_path / "results" / f"shinka_{workspace_path.name}" / run_name
+                    existing_db = target_results_dir / db_config.db_path
+
+                    if not existing_db.exists():
+                        break  # No existing DB, use this name
+
+                    # Check if existing DB has programs
+                    try:
+                        con = sqlite3.connect(existing_db)
+                        cur = con.cursor()
+                        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
+                        has_table = cur.fetchone() is not None
+                        row_count = 0
+                        if has_table:
+                            cur.execute("SELECT COUNT(*) FROM programs")
+                            row_count = cur.fetchone()[0]
+                        con.close()
+
+                        if row_count == 0:
+                            break  # Empty DB, safe to reuse
+
+                        # Has programs - try next suffix
+                        print(f"[SERVER] Run '{run_name}' exists with {row_count} programs, trying {base_run_name}-{suffix}")
+                        run_name = f"{base_run_name}-{suffix}"
+                        suffix += 1
+                    except sqlite3.DatabaseError:
+                        # Corrupted DB - try next suffix
+                        print(f"[SERVER] Run '{run_name}' has corrupted DB, trying {base_run_name}-{suffix}")
+                        run_name = f"{base_run_name}-{suffix}"
+                        suffix += 1
+
+            # Add Hydra overrides with ++ prefix
+            overrides = [
+                f"++evo_config.agentic_mode={str(evo_config.agentic_mode).lower()}",
+                f"++evo_config.agentic.backend={evo_config.agentic.backend}",
+                f"++evo_config.agentic.sandbox={evo_config.agentic.sandbox}",
+                f"++evo_config.agentic.max_turns={evo_config.agentic.max_turns}",
+                f"++evo_config.evaluator.mode={evo_config.evaluator.mode}",
+                f"++evo_config.num_generations={evo_config.num_generations}",
+                f"++evo_config.max_parallel_jobs={evo_config.max_parallel_jobs}",
+                f"++db_config.num_islands={db_config.num_islands}",
+                f"++db_config.archive_size={db_config.archive_size}",
+                f"++evo_config.job_type={evo_config.job_type}",
+                f"++run_name={run_name}",
+                # Point to the target workspace seed if provided; null disables defaults
+                f"++evo_config.init_program_path={evo_config.init_program_path or 'null'}",
+                # Set results directory to be in the workspace
+                f"++evo_config.results_dir={target_results_dir}",
+                f"++output_dir={target_results_dir}",
+            ]
+            # Override eval prompt if provided
+            if (
+                evo_config.evaluator.mode == "agentic"
+                and getattr(evo_config.evaluator.agentic, "eval_prompt", None) is not None
+            ):
+                escaped_eval = evo_config.evaluator.agentic.eval_prompt.replace("'", "\\'")
+                overrides.append(f"++evo_config.evaluator.agentic.eval_prompt='{escaped_eval}'")
+
+            # Override eval program path (allow empty to disable script-based eval)
+            overrides.append(f"++job_config.eval_program_path={ui_config.eval_program_path or 'null'}")
+            # If no eval script, also clear evaluate_function to avoid task defaults
+            if not ui_config.eval_program_path:
+                overrides.append("++evaluate_function=null")
+
+            # Handle embedding model - disable if not enabled or no model specified
+            embedding_model = evo_config.embedding_model
+            if embedding_model:
+                overrides.append(f"++evo_config.embedding_model={embedding_model}")
+            else:
+                overrides.append("++evo_config.embedding_model=null")
+
+            # Add evaluator agentic config if mode is agentic
+            if evo_config.evaluator.mode == "agentic" and evo_config.evaluator.agentic:
+                overrides.append(f"++evo_config.evaluator.agentic.max_turns={evo_config.evaluator.agentic.max_turns or 80}")
+                overrides.append(f"++evo_config.evaluator.agentic.sandbox={evo_config.evaluator.agentic.sandbox or 'workspace-write'}")
+                if getattr(evo_config.evaluator.agentic, "eval_prompt", None) is not None:
+                    escaped_eval = evo_config.evaluator.agentic.eval_prompt.replace("'", "\\'")
+                    overrides.append(f"++evo_config.evaluator.agentic.eval_prompt='{escaped_eval}'")
+
+            # Add task prompt if provided
+            # Always override task_sys_msg to avoid inheriting defaults
+            escaped_msg = (evo_config.task_sys_msg or "").replace("'", "\\'")
+            overrides.append(f"++evo_config.task_sys_msg='{escaped_msg}'")
+
+            # Add LLM models if specified
+            if evo_config.llm_models:
+                overrides.append(f"++evo_config.llm_models=[{','.join(evo_config.llm_models)}]")
+
+            cmd_parts.extend(overrides)
+
+            cmd_str = ' '.join(cmd_parts)
+
+            # Run from the server's directory (where shinka is installed)
+            # not from the target workspace, so uv finds the correct shinka package
+            server_dir = Path(__file__).parent.parent.parent  # shinka -> webui -> visualization.py
+
+            print(f"[SERVER] Launching evolution with command:")
+            print(f"[SERVER]   server_dir (cwd): {server_dir}")
+            print(f"[SERVER]   target workspace: {workspace_path}")
+            print(f"[SERVER]   results dir: {target_results_dir}")
+            print(f"[SERVER]   cmd: {cmd_str}")
+
+            # Create results directory in the TARGET workspace
+            target_results_dir.mkdir(parents=True, exist_ok=True)
+            log_file = target_results_dir / "evolution_launch.log"
+
+            with open(log_file, 'w') as log_f:
+                log_f.write(f"Command: {cmd_str}\n")
+                log_f.write(f"Server directory: {server_dir}\n")
+                log_f.write(f"Target workspace: {workspace_path}\n")
+                log_f.write("=" * 80 + "\n")
+
+            # Clean environment - remove VIRTUAL_ENV so uv uses project's venv
+            clean_env = os.environ.copy()
+            # Keep API keys but let uv find the right venv
+
+            # Start subprocess with output going to log file
+            with open(log_file, 'a') as log_f:
+                process = subprocess.Popen(
+                    cmd_parts,
+                    cwd=str(server_dir),  # Run from server dir so uv finds shinka
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # Detach from parent process
+                    env=clean_env,
+                )
+
+            print(f"[SERVER] Evolution process started with PID: {process.pid}")
+            print(f"[SERVER] Log file: {log_file}")
+
+            # Wait briefly to detect immediate crashes
+            import time
+            time.sleep(2)
+
+            # Check if process is still running
+            poll_result = process.poll()
+            if poll_result is not None:
+                # Process already exited - likely crashed
+                with open(log_file, 'r') as f:
+                    log_content = f.read()
+                # Extract error from log
+                error_lines = [l for l in log_content.split('\n') if 'Error' in l or 'Exception' in l or 'Traceback' in l]
+                error_summary = '\n'.join(error_lines[-5:]) if error_lines else "Process exited immediately"
+                raise RuntimeError(f"Evolution process crashed (exit code {poll_result}): {error_summary}\n\nFull log: {log_file}")
+
+            # Track this results directory so list_databases can find it
+            # (even if it's outside the server's main results/ directory)
+            launched_run_roots.add(str(target_results_dir))
+            print(f"[SERVER] Tracking external results directory: {target_results_dir}")
+
+            self.send_json_response({
+                "ok": True,
+                "run_id": run_name,
+                "results_path": str(target_results_dir),
+                "db_path": str(target_results_dir / db_config.db_path),
+                "log_file": str(log_file),
+                "message": f"Evolution run started successfully (PID: {process.pid})",
+            })
+        except Exception as e:
+            print(f"[SERVER] Error starting evolution run: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    # ========== End New Run Feature Handlers ==========
 
     def send_json_response(self, data):
         """Helper to send a JSON response."""
