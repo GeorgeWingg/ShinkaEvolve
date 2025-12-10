@@ -243,6 +243,69 @@ class Program:
 
         return cls(**filtered_data)
 
+    # =========================================================================
+    # Git-backed storage methods (Milestone 1 of GIT_WORKTREE_EXECPLAN.md)
+    # =========================================================================
+
+    def get_commit_sha(self) -> Optional[str]:
+        """Get the git commit SHA for this program, if stored.
+
+        Returns:
+            The 40-character commit SHA, or None if not git-backed.
+        """
+        return self.metadata.get("git_commit_sha")
+
+    def set_commit_sha(self, sha: str) -> None:
+        """Set the git commit SHA for this program.
+
+        Args:
+            sha: The 40-character git commit SHA.
+        """
+        self.metadata["git_commit_sha"] = sha
+
+    def get_code_content(self, git_manager: Optional[Any] = None) -> str:
+        """Get the code for this program, from either blob or git.
+
+        This method provides a unified interface for both legacy (text blob)
+        and git-backed storage modes. It enables hybrid support where legacy
+        nodes and git-backed nodes coexist seamlessly.
+
+        Args:
+            git_manager: Optional EvolutionGitManager for git-backed retrieval.
+                         Pass None to use legacy blob-only mode.
+
+        Returns:
+            The program code as a string.
+
+        Raises:
+            ValueError: If no code is available (no blob and no git SHA).
+
+        Example:
+            # Legacy mode (code stored in SQLite)
+            code = program.get_code_content()
+
+            # Git-backed mode
+            from shinka.webui.git_worktree import EvolutionGitManager
+            git_mgr = EvolutionGitManager(repo_path)
+            code = program.get_code_content(git_mgr)
+        """
+        # Priority 1: Use code blob if present (legacy fallback)
+        if self.code:
+            return self.code
+
+        # Priority 2: Use git storage if available
+        commit_sha = self.get_commit_sha()
+        if commit_sha and git_manager is not None:
+            # Import here to avoid circular dependency
+            return git_manager.get_file_contents(commit_sha)
+
+        # No code available
+        raise ValueError(
+            f"No code available for program {self.id}: "
+            "missing both code blob and git commit SHA. "
+            "Either populate the 'code' field or enable git-backed storage."
+        )
+
 
 class ProgramDatabase:
     """
@@ -521,6 +584,34 @@ class ProgramDatabase:
             return 0
         self.cursor.execute("SELECT COUNT(*) FROM programs")
         return (self.cursor.fetchone() or {"COUNT(*)": 0})["COUNT(*)"]
+
+    @db_retry()
+    def update_program_metadata(self, program_id: str, metadata: dict) -> bool:
+        """Update a program's metadata field in the database.
+
+        This method uses retry logic to handle transient SQLite errors
+        when running parallel jobs.
+
+        Args:
+            program_id: The ID of the program to update
+            metadata: The metadata dictionary to store
+
+        Returns:
+            True if the update succeeded, False otherwise
+        """
+        if not self.cursor or not self.conn:
+            raise ConnectionError("DB not connected.")
+        if self.read_only:
+            logger.warning("Cannot update metadata in read-only mode")
+            return False
+
+        metadata_json = json.dumps(metadata)
+        self.cursor.execute(
+            "UPDATE programs SET metadata = ? WHERE id = ?",
+            (metadata_json, program_id),
+        )
+        self.conn.commit()
+        return True
 
     @db_retry()
     def add(self, program: Program, verbose: bool = False) -> str:

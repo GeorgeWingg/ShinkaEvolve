@@ -197,6 +197,7 @@ class EvolutionConfig:
     meta_llm_models: Optional[List[str]] = None
     meta_llm_kwargs: dict = field(default_factory=lambda: {})
     meta_max_recommendations: int = 5
+    meta_backend: Optional[str] = None  # "same" | "codex" | "gemini" | "claude" | "shinka" | None
     embedding_model: Optional[str] = None
     embedding_include_globs: List[str] = field(default_factory=lambda: ["**/*"])
     embedding_exclude_globs: List[str] = field(
@@ -210,9 +211,11 @@ class EvolutionConfig:
             "*.pyo",
         ]
     )
-    embedding_max_files: int = 200
-    embedding_max_total_bytes: int = 500_000
-    embedding_max_bytes_per_file: int = 200_000
+    embedding_max_files: int = 500  # Increased default for larger codebases
+    embedding_max_total_bytes: int = 2_000_000  # 2MB default
+    embedding_max_bytes_per_file: int = 500_000  # 500KB per file
+    cleanup_old_generations: bool = False  # Auto-cleanup old gen dirs to save disk
+    cleanup_keep_last_n: int = 50  # Keep last N generations when cleanup enabled
     embedding_use_changed_files_first: bool = True
     init_program_path: Optional[str] = "initial.py"
     init_support_dir: Optional[str] = None
@@ -225,6 +228,7 @@ class EvolutionConfig:
     agentic_mode: bool = False
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
+    max_score: float = 1.0  # Maximum possible score (defines the scale)
 
 
 @dataclass
@@ -434,31 +438,37 @@ class EvolutionRunner:
             patch_type_probs=evo_config.patch_type_probs,
             use_text_feedback=evo_config.use_text_feedback,
             agentic_mode=evo_config.agentic_mode,
+            max_score=evo_config.max_score,
         )
 
         # Initialize MetaSummarizer for meta-recommendations
         # In agentic mode, use CLI backend for meta queries instead of direct LLMClient
         meta_agent_runner = None
         if evo_config.agentic_mode:
-            # Use the same backend selection as agentic editing
-            if evo_config.agentic.backend == "gemini":
+            # Determine which backend to use for meta/scratchpad
+            # If meta_backend is None, use the same as agentic editing
+            meta_backend = evo_config.meta_backend or evo_config.agentic.backend
+
+            if meta_backend == "gemini":
                 meta_agent_runner = run_gemini_task
-            elif evo_config.agentic.backend == "claude":
+            elif meta_backend == "claude":
                 meta_agent_runner = run_claude_task
-            elif evo_config.agentic.backend == "shinka":
+            elif meta_backend == "shinka":
                 meta_agent_runner = run_shinka_task
             else:
                 meta_agent_runner = run_codex_task
             logger.info(
-                f"MetaSummarizer using agent_runner ({evo_config.agentic.backend}) for agentic mode"
+                f"MetaSummarizer using agent_runner ({meta_backend}) for agentic mode"
             )
 
         self.meta_summarizer = MetaSummarizer(
             meta_llm_client=self.meta_llm,
             agent_runner=meta_agent_runner,
+            results_dir=Path(self.results_dir) if self.results_dir else None,
             language=evo_config.language,
             use_text_feedback=evo_config.use_text_feedback,
             max_recommendations=evo_config.meta_max_recommendations,
+            agentic_mode=evo_config.agentic_mode,
         )
 
         # Initialize NoveltyJudge for novelty assessment
@@ -486,8 +496,9 @@ class EvolutionRunner:
             msg = f"Language {self.evo_config.language} not supported"
             raise ValueError(msg)
 
-        # Queue for managing parallel jobs
+        # Queue for managing parallel jobs (protected by _jobs_lock for thread safety)
         self.running_jobs: List[RunningJob] = []
+        self._jobs_lock = threading.Lock()
         self.best_program_id: Optional[str] = None
         self.next_generation_to_submit = 0
         
@@ -1001,14 +1012,7 @@ class EvolutionRunner:
                         db_program.metadata = {}
                     db_program.metadata["meta_cost"] = meta_cost
                     # Update the program in the database with the new metadata
-                    import json
-
-                    metadata_json = json.dumps(db_program.metadata)
-                    self.db.cursor.execute(
-                        "UPDATE programs SET metadata = ? WHERE id = ?",
-                        (metadata_json, db_program.id),
-                    )
-                    self.db.conn.commit()
+                    self.db.update_program_metadata(db_program.id, db_program.metadata)
 
         # Save meta memory state after each job completion
         self._save_meta_memory()
@@ -1222,12 +1226,14 @@ class EvolutionRunner:
                 )
                 running_job.agentic_future = future
                 running_job.job_id = f"agentic_gen_{current_gen}"
-                self.running_jobs.append(running_job)
+                with self._jobs_lock:
+                    self.running_jobs.append(running_job)
+                    queue_size = len(self.running_jobs)
                 self._write_active_jobs_file()
                 if self.verbose:
                     logger.info(
                         f"Submitted agentic job for generation {current_gen}, "
-                        f"queue size: {len(self.running_jobs)}"
+                        f"queue size: {queue_size}"
                     )
             else:
                 # Fallback to synchronous execution if no executor
@@ -1242,23 +1248,28 @@ class EvolutionRunner:
         else:
             job_id = self.scheduler.submit_async(exec_fname, results_dir)
             running_job.job_id = job_id
-            self.running_jobs.append(running_job)
+            with self._jobs_lock:
+                self.running_jobs.append(running_job)
+                queue_size = len(self.running_jobs)
             self._write_active_jobs_file()
 
             if self.verbose:
                 logger.info(
                     f"Submitted job for generation {current_gen}, "
-                    f"queue size: {len(self.running_jobs)}"
+                    f"queue size: {queue_size}"
                 )
 
     def _write_active_jobs_file(self) -> None:
         """Write active_jobs.json with metadata about currently running jobs.
-        
+
         This allows the WebUI to display in-progress nodes in the tree.
         """
         try:
+            # Take thread-safe snapshot of jobs
+            with self._jobs_lock:
+                jobs_snapshot = list(self.running_jobs)
             jobs_data = []
-            for job in self.running_jobs:
+            for job in jobs_snapshot:
                 jobs_data.append({
                     "job_id": str(job.job_id) if not hasattr(job.job_id, 'pid') else f"pid_{job.job_id.pid}",
                     "generation": job.generation,
@@ -1290,7 +1301,11 @@ class EvolutionRunner:
         completed = []
         still_running = []
 
-        for job in self.running_jobs:
+        # Take a thread-safe snapshot of jobs to check
+        with self._jobs_lock:
+            jobs_snapshot = list(self.running_jobs)
+
+        for job in jobs_snapshot:
             # Check agentic futures first
             if job.agentic_future is not None:
                 if job.agentic_future.done():
@@ -1323,7 +1338,9 @@ class EvolutionRunner:
                     # Job still running
                     still_running.append(job)
 
-        self.running_jobs = still_running
+        # Update jobs list atomically
+        with self._jobs_lock:
+            self.running_jobs = still_running
         
         # Update active_jobs.json after jobs complete
         if completed:
@@ -1455,14 +1472,7 @@ class EvolutionRunner:
                         db_program.metadata = {}
                     db_program.metadata["meta_cost"] = meta_cost
                     # Update the program in the database with the new metadata
-                    import json
-
-                    metadata_json = json.dumps(db_program.metadata)
-                    self.db.cursor.execute(
-                        "UPDATE programs SET metadata = ? WHERE id = ?",
-                        (metadata_json, db_program.id),
-                    )
-                    self.db.conn.commit()
+                    self.db.update_program_metadata(db_program.id, db_program.metadata)
 
         if self.llm_selection is not None:
             if "model_name" not in db_program.metadata:
@@ -1551,6 +1561,9 @@ class EvolutionRunner:
 
         # Save meta memory state after each job completion
         self._save_meta_memory()
+        
+        # Cleanup old generations if enabled (saves disk space for long runs)
+        self._cleanup_old_generations()
 
     def _update_best_solution(self):
         """Checks and updates the best program."""
@@ -2077,23 +2090,32 @@ class EvolutionRunner:
             patch_txt = None
             patch_path = None
         else:
-            patch_str = (
-                f"```{self.evo_config.language}\n{primary_content}\n```"
-            )
-            (
-                _,
-                num_applied,
-                _output_path,
-                error_msg,
-                patch_txt,
-                patch_path,
-            ) = apply_full_patch(
-                patch_str=patch_str,
-                original_str=original_for_patch,
-                patch_dir=patch_dir,
-                language=self.evo_config.language,
-                verbose=False,
-            )
+            # Bypass legacy apply_full_patch for agentic mode to avoid EVOLVE-BLOCK enforcement.
+            # We trust the agent's full file output.
+            output_path = Path(patch_dir) / f"main.{self.lang_ext}"
+            output_path.write_text(primary_content, encoding="utf-8")
+            num_applied = 1
+            error_msg = None
+            
+            # Generate a diff for logging/legacy compatibility
+            patch_txt = None
+            patch_path = None
+            try:
+                 # Simple unified diff
+                 diff_lines = difflib.unified_diff(
+                    original_for_patch.splitlines(keepends=True),
+                    primary_content.splitlines(keepends=True),
+                    fromfile=f"original.{self.lang_ext}",
+                    tofile=f"main.{self.lang_ext}",
+                 )
+                 patch_txt = "".join(diff_lines)
+                 if patch_txt:
+                     patch_path = Path(patch_dir) / "edit.diff"
+                     patch_path.write_text(patch_txt, encoding="utf-8")
+                     # Also write backup of original for completeness
+                     (Path(patch_dir) / f"original.{self.lang_ext}").write_text(original_for_patch, encoding="utf-8")
+            except Exception as e:
+                 logger.warning(f"Failed to generate diff for agentic edit: {e}")
 
         if error_msg is not None or num_applied == 0:
             return failure_meta(
@@ -2385,6 +2407,44 @@ class EvolutionRunner:
             else:
                 logger.info("No previous meta memory state found - starting fresh")
 
+    def _cleanup_old_generations(self) -> None:
+        """Remove old generation directories to save disk space.
+        
+        Only runs if cleanup_old_generations is enabled in config.
+        Keeps the last N generations as specified by cleanup_keep_last_n.
+        Always preserves the 'best' directory.
+        """
+        if not self.evo_config.cleanup_old_generations:
+            return
+        
+        keep_n = max(1, self.evo_config.cleanup_keep_last_n)
+        results_path = Path(self.results_dir)
+        
+        # Find all generation directories
+        gen_dirs = sorted(
+            results_path.glob(f"{FOLDER_PREFIX}_*"),
+            key=lambda p: int(p.name.split("_")[-1]) if p.name.split("_")[-1].isdigit() else -1,
+            reverse=True
+        )
+        
+        # Keep the most recent N directories
+        dirs_to_remove = gen_dirs[keep_n:]
+        
+        for gen_dir in dirs_to_remove:
+            try:
+                gen_num = gen_dir.name.split("_")[-1]
+                if gen_dir.is_dir() and gen_num.isdigit():
+                    shutil.rmtree(gen_dir)
+                    logger.debug(f"Cleaned up old generation directory: {gen_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup {gen_dir}: {e}")
+        
+        if dirs_to_remove:
+            logger.info(
+                f"Cleaned up {len(dirs_to_remove)} old generation directories, "
+                f"keeping last {keep_n}"
+            )
+
     def _workspace_root_for_program(self, program: Program) -> Optional[Path]:
         """Return the on-disk directory for the given program's workspace."""
 
@@ -2590,6 +2650,7 @@ class EvolutionRunner:
                 task_name=self.job_config.eval_program_path or "agentic_evaluator",
                 results_dir=str(self.results_dir),
                 eval_prompt=getattr(self.evo_config.evaluator.agentic, "eval_prompt", None),
+                max_score=self.evo_config.max_score,
             )
         except (CodexExecutionError, GeminiExecutionError, ClaudeExecutionError, ShinkaExecutionError) as exc:
             # If metrics are missing, emit a fallback so the run can proceed
@@ -2665,25 +2726,16 @@ class EvolutionRunner:
         if not source_root.exists():
             return
 
-        def _ignore(dir_path: str, names: List[str]) -> List[str]:
-            dir_abspath = Path(dir_path).resolve()
-            try:
-                dir_rel = dir_abspath.relative_to(source_root)
-            except ValueError:
-                dir_rel = Path(".")
-            ignored: List[str] = []
-            rel_prefix = Path(".") if dir_rel == Path(".") else dir_rel
-            for name in names:
-                rel_path = rel_prefix / name if rel_prefix != Path(".") else Path(name)
-                if self._should_skip_workspace_path(rel_path):
-                    ignored.append(name)
-            return ignored
-
-        shutil.copytree(
+        # Use CoW (Copy-on-Write) when available for ~100x disk savings on large codebases
+        # Pass exclusions as sets instead of callback to preserve CoW benefits
+        from shinka.core.fs_utils import fast_copy
+        fast_copy(
             source_root,
             target_dir,
             dirs_exist_ok=True,
-            ignore=_ignore,
+            exclude_dirs=WORKSPACE_EXCLUDE_DIRS,
+            exclude_suffixes=WORKSPACE_EXCLUDE_SUFFIXES,
+            exclude_files=WORKSPACE_EXCLUDE_FILES,
         )
 
     def _copy_support_tree(

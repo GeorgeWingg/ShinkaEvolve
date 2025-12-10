@@ -1,3 +1,8 @@
+# =============================================================================
+# NON-AGENTIC MODE PROMPTS (Legacy - used with LLMClient direct API calls)
+# These prompts receive piped-in code and metrics
+# =============================================================================
+
 # Step 1: Individual Program Summaries
 META_STEP1_SYSTEM_MSG = (
     "You are an expert programming assistant analyzing an individual program. "
@@ -125,4 +130,117 @@ META_STEP3_USER_MSG = (
     "Avoid generic advice - provide 2-3 sentences per recommendation. "
     "DO NOT RECOMMEND CHANGING THE EVALUATION CODE. ONLY "
     "MAKE ALGORITHMIC RECOMMENDATIONS."
+)
+
+
+# =============================================================================
+# AGENTIC MODE PROMPTS (New - agent explores results directory itself)
+# Agent reads files directly and writes output to _meta/ directory
+# =============================================================================
+
+AGENTIC_META_SYSTEM_MSG = (
+    "You are an expert programming assistant analyzing evolution results. "
+    "You have full access to the results directory and can read all files. "
+    "Write your analysis output to the _meta/ directory."
+)
+
+# Step 1: Analyze individual programs (agent reads code and metrics from disk)
+AGENTIC_META_STEP1_USER_MSG = (
+    "# Task: Analyze Programs from Generations {start_gen} to {end_gen}\n\n"
+    "## Where to Find Data\n"
+    "For each generation N, you can read:\n"
+    "- **Code**: `gen_N/main.py` (and any helper files in the same directory)\n"
+    "- **Metrics**: `gen_N/results/metrics.json` - contains `combined_score`, `public` metrics\n"
+    "- **Correctness**: `gen_N/results/correct.json` - contains `correct` (boolean)\n\n"
+    "## Your Task\n"
+    "1. Read the code and metrics for each generation from {start_gen} to {end_gen}\n"
+    "2. Create the output directory if needed: `_meta/summaries/`\n"
+    "3. For each program, write a summary file to: `_meta/summaries/gen_N.md`\n\n"
+    "## Summary Format\n"
+    "Each summary file should contain:\n"
+    "```\n"
+    "# Generation N Summary\n\n"
+    "- **Score**: [combined_score from metrics.json]\n"
+    "- **Correct**: [Yes/No from correct.json]\n"
+    "- **Implementation**: [Key implementation details you discovered in the code]\n"
+    "- **Performance**: [Notable metrics from public metrics]\n"
+    "- **Insights**: [What makes this approach work or fail, based on code analysis]\n"
+    "```\n\n"
+    "## Important\n"
+    "- Read the actual code files to understand the implementation\n"
+    "- Compare approaches across generations to identify patterns\n"
+    "- Be specific about what algorithmic choices were made\n"
+    "- Note any helper files or multi-file structures"
+)
+
+# Step 2: Generate global insights (agent reads summaries and best program)
+AGENTIC_META_STEP2_USER_MSG = (
+    "# Task: Generate Global Insights\n\n"
+    "## Context\n"
+    "You have already created individual summaries in `_meta/summaries/`.\n"
+    "The current best program is **generation {best_gen}** with score **{best_score}**.\n\n"
+    "## Where to Find Data\n"
+    "- Individual summaries: `_meta/summaries/gen_*.md`\n"
+    "- Best program code: `gen_{best_gen}/main.py` (and helper files)\n"
+    "- Best program metrics: `gen_{best_gen}/results/metrics.json`\n"
+    "- Previous insights (if any): `_meta/insights.md`\n\n"
+    "## Your Task\n"
+    "1. Read all individual summaries from `_meta/summaries/`\n"
+    "2. Read the best program's code to understand why it succeeds\n"
+    "3. If `_meta/insights.md` exists, incorporate previous insights\n"
+    "4. Write updated global insights to: `_meta/insights.md`\n\n"
+    "## Insights Format\n"
+    "Structure your insights file with these sections:\n"
+    "```\n"
+    "# Global Insights\n\n"
+    "## Successful Patterns\n"
+    "[What approaches led to score improvements - reference specific generations]\n\n"
+    "## Ineffective Approaches\n"
+    "[What approaches worsened performance - explain why they failed]\n\n"
+    "## Implementation Insights\n"
+    "[Key coding patterns/techniques - what makes the best program effective]\n\n"
+    "## Performance Analysis\n"
+    "[Score trends, correlations between approaches and results]\n"
+    "```\n\n"
+    "## Important\n"
+    "- Reference specific generation numbers and their scores\n"
+    "- Highlight what makes generation {best_gen} the current best\n"
+    "- Be concrete about implementation details, not generic advice\n"
+    "- Build upon any previous insights rather than replacing them"
+)
+
+# Step 3: Generate recommendations (agent reads insights and writes recommendations)
+AGENTIC_META_STEP3_USER_MSG = (
+    "# Task: Generate Recommendations\n\n"
+    "## Context\n"
+    "The current best program is **generation {best_gen}** with score **{best_score}**.\n\n"
+    "## Where to Find Data\n"
+    "- Global insights: `_meta/insights.md`\n"
+    "- Best program code: `gen_{best_gen}/main.py` (and helper files)\n"
+    "- Previous recommendations (if any): `_meta/recommendations.md`\n\n"
+    "## Your Task\n"
+    "1. Read the global insights from `_meta/insights.md`\n"
+    "2. Read the best program's code to understand current state\n"
+    "3. Generate {max_recommendations} actionable recommendations\n"
+    "4. Write to: `_meta/recommendations.md`\n\n"
+    "## Recommendations Format\n"
+    "```\n"
+    "# Recommendations\n\n"
+    "1. **[Specific recommendation title]**\n"
+    "   [2-3 sentences explaining what to implement and why, grounded in insights]\n\n"
+    "2. **[Another recommendation]**\n"
+    "   [Explanation...]\n\n"
+    "...\n"
+    "```\n\n"
+    "## Requirements\n"
+    "Each recommendation must be:\n"
+    "- **Specific**: Clear about what code changes to make\n"
+    "- **Actionable**: Can be directly implemented\n"
+    "- **Evidence-based**: Grounded in the successful patterns from insights\n"
+    "- **Diverse**: Cover different optimization approaches\n\n"
+    "## Important\n"
+    "- Prioritize improvements to the best program's approach\n"
+    "- Consider both incremental improvements and novel variations\n"
+    "- DO NOT recommend changes to evaluation code\n"
+    "- Focus on algorithmic and implementation improvements only"
 )

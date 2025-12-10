@@ -7,6 +7,9 @@ Where backend is: codex, gemini, claude, shinka
 
 This creates a minimal task and captures ALL events emitted by each backend
 to understand what data we get from each.
+
+NOTE: This is a manual test script, not meant for pytest collection.
+      Run directly with python, not via pytest.
 """
 
 import json
@@ -15,6 +18,14 @@ import sys
 import tempfile
 from pathlib import Path
 from datetime import datetime
+
+import pytest
+
+# Skip this entire module when run via pytest
+# This is a manual test script meant to be run directly
+pytestmark = pytest.mark.skip(
+    reason="Manual test script - run directly with: uv run python tests/test_backend_event_capture.py [backend]"
+)
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))

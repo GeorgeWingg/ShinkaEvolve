@@ -11,6 +11,8 @@ Tests that:
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -47,22 +49,23 @@ def mock_agent_runner(user_prompt, workdir, **kwargs):
     }
 
 
-def test_instantiation():
-    """Test that MetaSummarizer can be created with agent_runner."""
-    print("\n=== Test 1: Instantiation ===")
-    meta = MetaSummarizer(
+@pytest.fixture
+def meta():
+    """Create a MetaSummarizer instance with mock agent_runner."""
+    return MetaSummarizer(
         agent_runner=mock_agent_runner,
         language="python",
     )
+
+
+def test_instantiation(meta):
+    """Test that MetaSummarizer can be created with agent_runner."""
     assert meta.agent_runner is not None
     assert meta.meta_llm_client is None
-    print("✅ MetaSummarizer instantiated with agent_runner (no meta_llm_client)")
-    return meta
 
 
 def test_query_via_agent(meta):
     """Test that _query_via_agent correctly parses mock events."""
-    print("\n=== Test 2: _query_via_agent ===")
     response, cost = meta._query_via_agent("Test prompt", "Test system")
 
     assert response is not None, "Response should not be None"
@@ -70,15 +73,9 @@ def test_query_via_agent(meta):
     assert "Key observations" in response, f"Response should contain 'Key observations': {response}"
     assert cost == 0.0, "Cost should be 0.0 (agent_runner doesn't track cost)"
 
-    print(f"✅ _query_via_agent returned {len(response)} chars")
-    print(f"   Preview: {response[:80]}...")
-    return response
-
 
 def test_multi_file_program_msg():
     """Test that construct_individual_program_msg handles multi-file metadata."""
-    print("\n=== Test 3: Multi-file construct_individual_program_msg ===")
-
     # Create a program with multi-file content
     dummy_program = Program(
         id="test-multi-123",
@@ -108,10 +105,6 @@ def test_multi_file_program_msg():
     assert "def helper():" in msg, "Should contain helper.py content"
     assert "fallback single file" not in msg, "Should NOT use fallback single file"
 
-    print("✅ Multi-file content correctly formatted")
-    print(f"   Total message length: {len(msg)} chars")
-    print(f"   Contains 3 files: main.py, helper.py, utils/math.py")
-
     # Also test single-file fallback
     single_program = Program(
         id="test-single-123",
@@ -128,14 +121,9 @@ def test_multi_file_program_msg():
     assert "def single(): pass" in single_msg, "Should contain single file code"
     assert "Files (" not in single_msg, "Should NOT have Files header for single file"
 
-    print("✅ Single-file fallback also works")
-    return msg
-
 
 def test_meta_flow_with_mock(meta):
     """Test the full 3-step meta flow with mock agent_runner."""
-    print("\n=== Test 4: Full meta flow ===")
-
     # Create dummy programs to analyze
     programs = [
         Program(
@@ -155,7 +143,6 @@ def test_meta_flow_with_mock(meta):
     for prog in programs:
         meta.add_evaluated_program(prog)
 
-    print(f"   Added {len(programs)} programs to meta tracking")
     assert len(meta.evaluated_since_last_meta) == 3
 
     # Run the meta update
@@ -172,19 +159,9 @@ def test_meta_flow_with_mock(meta):
     assert meta.meta_recommendations is not None, "meta_recommendations should be set"
     assert len(meta.evaluated_since_last_meta) == 0, "Should clear evaluated programs after processing"
 
-    print("✅ Full 3-step meta flow completed successfully")
-    print(f"   Recommendations length: {len(recommendations)} chars")
-    print(f"   Summary set: {'Yes' if meta.meta_summary else 'No'}")
-    print(f"   Scratchpad set: {'Yes' if meta.meta_scratch_pad else 'No'}")
-    print(f"   Programs cleared: {len(meta.evaluated_since_last_meta)} remaining")
-
-    return recommendations
-
 
 def test_should_update_meta():
     """Test that should_update_meta works with agent_runner."""
-    print("\n=== Test 5: should_update_meta check ===")
-
     # With agent_runner, should allow updates
     meta_with_runner = MetaSummarizer(agent_runner=mock_agent_runner)
     meta_with_runner.add_evaluated_program(Program(
@@ -193,7 +170,6 @@ def test_should_update_meta():
     ))
 
     assert meta_with_runner.should_update_meta(1) == True, "Should allow update with agent_runner"
-    print("✅ should_update_meta returns True when agent_runner is set")
 
     # Without either, should not allow updates
     meta_without = MetaSummarizer()
@@ -203,37 +179,15 @@ def test_should_update_meta():
     ))
 
     assert meta_without.should_update_meta(1) == False, "Should not allow update without agent_runner or llm_client"
-    print("✅ should_update_meta returns False when neither is set")
 
 
+# Keep main() for backwards compatibility with direct script execution
 def main():
-    print("=" * 60)
-    print("MetaSummarizer Agentic Mode Validation Tests")
-    print("=" * 60)
-
-    try:
-        # Run tests
-        meta = test_instantiation()
-        test_query_via_agent(meta)
-        test_multi_file_program_msg()
-
-        # Create fresh instance for flow test
-        meta2 = MetaSummarizer(agent_runner=mock_agent_runner, language="python")
-        test_meta_flow_with_mock(meta2)
-
-        test_should_update_meta()
-
-        print("\n" + "=" * 60)
-        print("✅ ALL TESTS PASSED")
-        print("=" * 60)
-        print("\nThe MetaSummarizer agentic mode implementation is working correctly.")
-        print("Next step: Enable meta_llm_models in a config and run a real evolution.")
-
-    except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    """Run tests manually (for backwards compatibility)."""
+    import subprocess
+    import sys
+    result = subprocess.run([sys.executable, "-m", "pytest", __file__, "-v"], check=False)
+    sys.exit(result.returncode)
 
 
 if __name__ == "__main__":

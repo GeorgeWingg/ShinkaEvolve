@@ -218,6 +218,66 @@ Each backend uses the same event streaming interface internally, ensuring consis
 | `migration_rate` | float | 0.1 | Fraction of population migrated |
 | `island_elitism` | bool | true | Preserve elites per island |
 
+### Embedding & Novelty Parameters
+
+These parameters control how code embeddings are computed for novelty-based diversity selection. The defaults are tuned for medium-to-large projects. **For very large codebases (e.g., Kubernetes, React), further increase these limits.**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | str | `"text-embedding-3-small"` | OpenAI embedding model for code similarity |
+| `embedding_max_files` | int | 500 | Maximum files to include in embedding corpus |
+| `embedding_max_total_bytes` | int | 2,000,000 | Maximum total bytes across all files (2MB) |
+| `embedding_max_bytes_per_file` | int | 500,000 | Maximum bytes per individual file (500KB) |
+| `embedding_include_globs` | list | `["**"]` | File patterns to include |
+| `embedding_exclude_globs` | list | `["results/**", "*.pyc", ...]` | File patterns to exclude |
+| `embedding_use_changed_files_first` | bool | true | Prioritize recently modified files |
+| `code_embed_sim_threshold` | float | 1.0 | Similarity threshold for novelty rejection (1.0 = disabled) |
+| `max_novelty_attempts` | int | 3 | Rejection sampling attempts before accepting |
+
+### Storage Management Parameters
+
+For long-running evolutions (100+ generations), disk space can become a concern. These parameters help manage storage:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `cleanup_old_generations` | bool | false | Auto-remove old generation directories |
+| `cleanup_keep_last_n` | int | 50 | Number of recent generations to preserve when cleanup is enabled |
+
+**Storage Notes:**
+- On macOS (APFS) and Linux (Btrfs/XFS), Shinka uses Copy-on-Write (CoW) for efficient disk usage
+- Each generation only consumes disk space for files that actually changed
+- With CoW, a 1GB codebase across 1000 generations may only use ~10-50GB instead of 1TB
+
+**Large Codebase Configuration Example:**
+
+For a codebase like Kubernetes (~25K files, 1.4GB), adjust embedding limits:
+
+```yaml
+evo_config:
+  # Increase limits for very large codebases
+  embedding_max_files: 2000         # Cover more of the codebase
+  embedding_max_total_bytes: 10000000  # 10MB corpus
+  embedding_max_bytes_per_file: 500000  # 500KB per file
+  
+  # Focus on relevant files
+  embedding_include_globs:
+    - "pkg/**/*.go"
+    - "cmd/**/*.go"
+  embedding_exclude_globs:
+    - "vendor/**"
+    - "**/*_test.go"
+    - "**/testdata/**"
+  
+  # Prioritize changed files for accurate novelty
+  embedding_use_changed_files_first: true
+  
+  # Enable cleanup for very long runs
+  cleanup_old_generations: true
+  cleanup_keep_last_n: 100  # Keep recent 100 generations
+```
+
+⚠️ **Note:** The WebUI embedding visualization has performance safeguards for large evolutions (500+ programs). The similarity heatmap will sample programs to prevent browser freezing.
+
 ### Resource Parameters
 
 | Parameter | Type | Default | Description |

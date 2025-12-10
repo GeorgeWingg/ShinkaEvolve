@@ -62,6 +62,7 @@ class AgenticEvaluator:
         task_name: str,
         results_dir: Optional[str] = None,
         eval_prompt: Optional[str] = None,
+        max_score: float = 1.0,
     ) -> AgenticEvaluatorResult:
         session_uuid = uuid.uuid4().hex
         session_dir = eval_sessions_root / session_uuid
@@ -75,6 +76,7 @@ class AgenticEvaluator:
             results_path=results_path,
             metrics_path=metrics_path,
             eval_prompt=eval_prompt,
+            max_score=max_score,
         )
 
         session_log: List[str] = []
@@ -129,11 +131,21 @@ class AgenticEvaluator:
                 f"Agentic evaluator did not produce metrics at {metrics_path}"
             )
 
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        # Parse metrics with error handling for malformed JSON
+        try:
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse metrics.json: {e}")
+            metrics = {"error": f"Invalid JSON in metrics: {e}"}
+
         correct_payload: Dict[str, Any] = {}
         correct_file = results_path / "correct.json"
         if correct_file.exists():
-            correct_payload = json.loads(correct_file.read_text(encoding="utf-8"))
+            try:
+                correct_payload = json.loads(correct_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse correct.json: {e}")
+                correct_payload = {"correct": False, "error": f"Invalid JSON: {e}"}
         correct_flag = bool(correct_payload.get("correct", False))
         error_msg = correct_payload.get("error")
 
@@ -166,6 +178,7 @@ class AgenticEvaluator:
         results_path: Path,
         metrics_path: Path,
         eval_prompt: Optional[str],
+        max_score: float = 1.0,
     ) -> tuple[str, str]:
         # Build a user prompt that always demands metrics.json, even when no eval command is provided.
         eval_criteria = eval_prompt.strip() if eval_prompt else ""
@@ -177,6 +190,7 @@ class AgenticEvaluator:
                 program_path=program_path,
                 results_path=results_path,
                 metrics_path=metrics_path,
+                max_score=max_score,
             )
             if eval_criteria:
                 user += f"\n\nEvaluation criteria:\n{eval_criteria}\n"
@@ -187,20 +201,24 @@ class AgenticEvaluator:
                 f"- Working directory: repository root\n"
                 f"- Program path: {program_path}\n"
                 f"- Results path: {results_path}\n"
-                f"- Metrics JSON: {metrics_path}\n\n"
+                f"- Metrics JSON: {metrics_path}\n"
+                f"- Max score: {max_score}\n\n"
                 "No evaluation command was supplied.\n"
                 "1) Inspect the workspace/program as needed.\n"
                 "2) Judge the submission against the evaluation criteria below.\n"
                 "3) Write a JSON file at the metrics path with at least these keys:\n"
-                "   {\"combined_score\": <float 0-1>, \"details\": <short reason>}.\n"
+                f'   {{"combined_score": <float 0-{max_score}>, "details": <short reason>}}.\n'
                 "   You may add more fields if useful.\n"
-                "4) If you cannot score, still create metrics.json with combined_score=0 and details explaining why.\n"
+                f"4) Write `{results_path}/correct.json` with:\n"
+                '   {"correct": <true if code works>, "error": <null or error message>}.\n'
+                "   Be generous for open-ended tasks - if the code runs and does something meaningful, mark correct=true.\n"
+                "5) If you cannot score, still create both files with fallback values (score=0, correct=false).\n"
             )
             if eval_criteria:
                 user += f"\nEvaluation criteria:\n{eval_criteria}\n"
-            user += "\nFinish after the metrics file is written.\n"
+            user += "\nFinish after both metrics.json and correct.json are written.\n"
 
-        return user.strip(), AGENTIC_EVAL_SYS.strip()
+        return user.strip(), AGENTIC_EVAL_SYS.format(max_score=max_score).strip()
 
 
 def _extract_session_id(event: Dict[str, Any]) -> Optional[str]:

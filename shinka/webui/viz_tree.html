@@ -5664,6 +5664,11 @@
         .swimming-fish svg {
             animation: fish-wiggle 0.3s ease-in-out infinite;
         }
+        /* Settled fish - no wiggle */
+        .swimming-fish.settled svg {
+            animation: none;
+            transform: scaleY(1);
+        }
 
         /* Click hint animation */
         @keyframes gentle-pulse {
@@ -11463,20 +11468,33 @@ ${'='.repeat(80)}
                     fishFullySettled = false; // Reset - fish are not yet settled
                     // Show visual feedback - grey circle
                     hoverZone.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
+                } else if (fishPhase === 'settled') {
+                    // Hovering settled fish shows the circle again
+                    hoverZone.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
                 }
             };
 
             hoverZone.onmouseleave = () => {
+                // Always hide the circle on leave
+                hoverZone.style.backgroundColor = 'transparent';
+                
                 if (fishSwimActive && fishPhase === 'returning') {
                     if (fishFullySettled) {
-                        // Fish have fully returned - stop swimming and keep them in place
-                        stopFishSwim();
+                        // Fish have fully returned - settle them in place (no transition)
+                        fishPhase = 'settled';
+                        // Stop wiggle animation on all fish
+                        swimmingFish.forEach(fish => {
+                            fish.el.classList.add('settled');
+                        });
+                        // Stop the animation loop
+                        if (fishAnimationFrame) {
+                            cancelAnimationFrame(fishAnimationFrame);
+                            fishAnimationFrame = null;
+                        }
                     } else {
                         // Fish haven't settled yet - resume swimming
                         fishPhase = 'swimming';
                     }
-                    // Hide visual feedback
-                    hoverZone.style.backgroundColor = 'transparent';
                 }
                 // Stop spawning when mouse leaves
                 if (spawnInterval) {
@@ -11516,9 +11534,25 @@ ${'='.repeat(80)}
                     spawnInterval = null;
                 }
                 
-                // If it was a quick click (not a hold), stop the animation
-                if (holdDuration < 300 && fishSwimActive) {
-                    stopFishSwim();
+                // If it was a quick click (not a hold)
+                if (holdDuration < 300) {
+                    if (fishPhase === 'settled') {
+                        // Click on settled fish - restart swimming
+                        fishPhase = 'swimming';
+                        fishFullySettled = false;
+                        // Remove settled class to re-enable wiggle
+                        swimmingFish.forEach(fish => {
+                            fish.el.classList.remove('settled');
+                        });
+                        // Restart animation loop
+                        if (!fishAnimationFrame) {
+                            fishAnimationFrame = requestAnimationFrame(animateFish);
+                        }
+                        hoverZone.style.backgroundColor = 'transparent';
+                    } else if (fishSwimActive) {
+                        // Stop the animation
+                        stopFishSwim();
+                    }
                 }
             };
 

@@ -46,6 +46,9 @@ dependencies = [
     "markdown",
     "aiofiles",
     "google-generativeai",
+    "keyring>=24.0.0",
+    "cryptography>=41.0.0",
+    "filelock>=3.0.0",  # Cross-platform file locking for git operations
 ]
 
 [tool.setuptools]

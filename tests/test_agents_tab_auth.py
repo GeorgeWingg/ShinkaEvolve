@@ -40,36 +40,61 @@ class TestSignOutFunctions:
         """signOutClaude function should exist."""
         assert "function signOutClaude()" in html_content
 
+    def _extract_function_body(self, html_content: str, func_name: str) -> str:
+        """Extract function body handling nested braces."""
+        # Match both regular and async functions
+        start_pattern = rf"(async\s+)?function {func_name}\(\)\s*\{{"
+        match = re.search(start_pattern, html_content)
+        if not match:
+            return ""
+
+        # Extract function body by counting braces
+        start_idx = match.end() - 1  # Position of opening {
+        brace_count = 0
+        for i, char in enumerate(html_content[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    return html_content[start_idx:i + 1]
+        return ""
+
     def test_signout_codex_sets_localstorage(self, html_content):
         """signOutCodex should set signed-out state in localStorage."""
-        # Find the signOutCodex function
-        match = re.search(r"function signOutCodex\(\)\s*\{[^}]+\}", html_content, re.DOTALL)
-        assert match, "signOutCodex function not found"
-        func_body = match.group(0)
+        func_body = self._extract_function_body(html_content, "signOutCodex")
+        assert func_body, "signOutCodex function not found"
         assert "localStorage.setItem('shinka_signed_out_codex', 'true')" in func_body, \
             "signOutCodex should persist signed-out state to localStorage"
 
     def test_signout_gemini_sets_localstorage(self, html_content):
         """signOutGemini should set signed-out state in localStorage."""
-        match = re.search(r"function signOutGemini\(\)\s*\{[^}]+\}", html_content, re.DOTALL)
-        assert match, "signOutGemini function not found"
-        func_body = match.group(0)
+        func_body = self._extract_function_body(html_content, "signOutGemini")
+        assert func_body, "signOutGemini function not found"
         assert "localStorage.setItem('shinka_signed_out_gemini', 'true')" in func_body, \
             "signOutGemini should persist signed-out state to localStorage"
 
     def test_signout_claude_sets_localstorage(self, html_content):
         """signOutClaude should set signed-out state in localStorage."""
-        match = re.search(r"function signOutClaude\(\)\s*\{[^}]+\}", html_content, re.DOTALL)
-        assert match, "signOutClaude function not found"
-        func_body = match.group(0)
+        func_body = self._extract_function_body(html_content, "signOutClaude")
+        assert func_body, "signOutClaude function not found"
         assert "localStorage.setItem('shinka_signed_out_claude', 'true')" in func_body, \
             "signOutClaude should persist signed-out state to localStorage"
 
     def test_signout_removes_api_keys(self, html_content):
-        """Sign-out functions should remove stored API keys."""
-        assert "localStorage.removeItem('shinka_api_key_codex')" in html_content
-        assert "localStorage.removeItem('shinka_api_key_gemini')" in html_content
-        assert "localStorage.removeItem('shinka_api_key_claude')" in html_content
+        """Sign-out functions should clear credentials via backend sync."""
+        # New implementation uses syncCredentialToBackend to delete credentials
+        func_body = self._extract_function_body(html_content, "signOutCodex")
+        assert "syncCredentialToBackend('openai'" in func_body and "'delete'" in func_body, \
+            "signOutCodex should sync credential deletion to backend"
+
+        func_body = self._extract_function_body(html_content, "signOutGemini")
+        assert "syncCredentialToBackend('google'" in func_body and "'delete'" in func_body, \
+            "signOutGemini should sync credential deletion to backend"
+
+        func_body = self._extract_function_body(html_content, "signOutClaude")
+        assert "syncCredentialToBackend('anthropic'" in func_body and "'delete'" in func_body, \
+            "signOutClaude should sync credential deletion to backend"
 
     def test_signout_shows_toast(self, html_content):
         """Sign-out functions should show toast notifications."""

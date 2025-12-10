@@ -58,8 +58,8 @@ def ensure_claude_available(claude_path: Optional[str] = None) -> Path:
 
     if not candidate:
         raise ClaudeUnavailableError(
-            "Claude CLI not found. Install it (e.g. `npm install -g @anthropic-ai/claude-code`) "
-            "or add it to PATH, then authenticate via `claude login`."
+            "Claude CLI not found. Install it with `npm install -g @anthropic-ai/claude-code`, "
+            "then run `claude` to authenticate."
         )
 
     resolved = Path(candidate)
@@ -273,7 +273,8 @@ def run_claude_task(
             env=env,
         )
 
-        prompt_preview = user_prompt.strip().splitlines()[0][:160] if user_prompt else ""
+        lines = user_prompt.strip().splitlines() if user_prompt else []
+        prompt_preview = lines[0][:160] if lines else ""
         register_session_process(
             process.pid,
             prompt_preview=prompt_preview,

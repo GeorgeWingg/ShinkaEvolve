@@ -207,7 +207,8 @@ def run_codex_task(
         text=True,
     )
 
-    prompt_preview = full_prompt.strip().splitlines()[0][:160] if full_prompt else ""
+    lines = full_prompt.strip().splitlines() if full_prompt else []
+    prompt_preview = lines[0][:160] if lines else ""
     register_session_process(
         process.pid,
         prompt_preview=prompt_preview,

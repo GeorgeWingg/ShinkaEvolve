@@ -49,8 +49,8 @@ def ensure_gemini_available(gemini_path: Optional[str] = None) -> Path:
 
     if not candidate:
         raise GeminiUnavailableError(
-            "Gemini CLI not found. Install it (e.g. `npm install -g @google/gemini-cli`) "
-            "or add it to PATH."
+            "Gemini CLI not found. Install it with `npm install -g @google/gemini-cli`, "
+            "then run `gemini` to authenticate."
         )
 
     resolved = Path(candidate)
@@ -83,7 +83,20 @@ def run_gemini_task(
     patch_type: Optional[str] = None,
     results_dir: Optional[str] = None,
 ) -> Iterator[Dict[str, Any]]:
-    """Execute a Gemini CLI task and stream its JSON events with retry on capacity errors."""
+    """Execute a Gemini CLI task and stream its JSON events with retry on capacity errors.
+
+    Token Usage Tracking:
+        - Gemini CLI v0.11+ provides real token counts in the 'result' event stats.
+        - For older versions, falls back to character-based estimation (len/4).
+        - Recommend using Gemini CLI v0.20+ for accurate token tracking and latest features.
+
+    Yields:
+        Dict events including 'usage' event at session end with:
+        - input_tokens, output_tokens, total_tokens
+        - total_cost_usd (calculated from pricing.py)
+        - estimated: bool indicating if tokens were estimated vs real
+        - duration_ms: session duration (if available from CLI)
+    """
 
     # Use cli_path if provided, fall back to codex_path for backward compat
     binary = ensure_gemini_available(cli_path or codex_path)
@@ -182,8 +195,15 @@ def run_gemini_task(
         events_emitted = 0
         session_id: Optional[str] = None
 
+        # Token tracking: prefer real counts from result event (Gemini CLI v0.11+)
+        # Fall back to character-based estimation if stats not available
         estimated_input_tokens = len(full_prompt) // 4 if full_prompt else 0
         estimated_output_tokens = 0
+        # Real token counts from Gemini CLI result event (None until received)
+        real_input_tokens: Optional[int] = None
+        real_output_tokens: Optional[int] = None
+        real_total_tokens: Optional[int] = None
+        duration_ms: Optional[int] = None
 
         # Pass prompt as positional argument; stdin streaming has caused hangs in
         # stream-json mode. This mirrors the CLI usage that works interactively.
@@ -226,7 +246,7 @@ def run_gemini_task(
 
         process = subprocess.Popen(
             cmd_with_prompt,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,  # No stdin needed, prevents hangs
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -234,7 +254,8 @@ def run_gemini_task(
             env=env,
         )
 
-        prompt_preview = full_prompt.strip().splitlines()[0][:160] if full_prompt else ""
+        lines = full_prompt.strip().splitlines() if full_prompt else []
+        prompt_preview = lines[0][:160] if lines else ""
         register_session_process(
             process.pid,
             prompt_preview=prompt_preview,
@@ -262,20 +283,33 @@ def run_gemini_task(
                 line = process.stdout.readline()
                 if not line:
                     if process.poll() is not None:
-                        total_tokens = estimated_input_tokens + estimated_output_tokens
+                        # Prefer real token counts from result event (Gemini CLI v0.11+)
+                        # Fall back to character-based estimation for older versions
+                        final_input = real_input_tokens if real_input_tokens is not None else estimated_input_tokens
+                        final_output = real_output_tokens if real_output_tokens is not None else estimated_output_tokens
+                        final_total = real_total_tokens if real_total_tokens is not None else (final_input + final_output)
+
+                        is_estimated = real_input_tokens is None
+                        if is_estimated:
+                            logger.debug(
+                                "Using estimated tokens (Gemini CLI v0.11+ recommended for accurate counts)"
+                            )
+
                         yield {
                             "type": "usage",
                             "session_id": session_id,
                             "usage": {
-                                "input_tokens": estimated_input_tokens,
-                                "output_tokens": estimated_output_tokens,
-                                "total_tokens": total_tokens,
+                                "input_tokens": final_input,
+                                "output_tokens": final_output,
+                                "total_tokens": final_total,
                                 "total_cost_usd": calculate_cost(
                                     model_name,
-                                    estimated_input_tokens,
-                                    estimated_output_tokens,
+                                    final_input,
+                                    final_output,
                                     "gemini",
                                 ),
+                                "estimated": is_estimated,  # Flag to indicate if tokens were estimated
+                                "duration_ms": duration_ms,
                             },
                             "model": model_name,
                         }
@@ -289,7 +323,8 @@ def run_gemini_task(
 
                 if stdout_capture:
                     try:
-                        stdout_capture.open("a", encoding="utf-8").write(line + "\n")
+                        with stdout_capture.open("a", encoding="utf-8") as f:
+                            f.write(line + "\n")
                     except Exception:
                         pass
 
@@ -384,6 +419,21 @@ def run_gemini_task(
                         }
                     }
 
+                elif event_type == "result":
+                    # Extract real token counts from Gemini CLI (v0.11+)
+                    # This provides accurate usage data instead of estimation
+                    stats = event.get("stats")
+                    if stats and isinstance(stats, dict):
+                        real_input_tokens = stats.get("input_tokens")
+                        real_output_tokens = stats.get("output_tokens")
+                        real_total_tokens = stats.get("total_tokens")
+                        duration_ms = stats.get("duration_ms")
+                        logger.debug(
+                            f"Gemini result stats: in={real_input_tokens}, "
+                            f"out={real_output_tokens}, total={real_total_tokens}, "
+                            f"duration={duration_ms}ms"
+                        )
+
         except GeminiExecutionError as exc:
             if process.poll() is None:
                 process.kill()
@@ -401,6 +451,7 @@ def run_gemini_task(
                 try:
                     err_tail = process.stderr.read()
                     if err_tail:
-                        stderr_capture.open("a", encoding="utf-8").write(err_tail)
+                        with stderr_capture.open("a", encoding="utf-8") as f:
+                            f.write(err_tail)
                 except Exception:
                     pass

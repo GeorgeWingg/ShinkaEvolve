@@ -165,8 +165,8 @@ def test_gemini_parity_args(mock_subprocess, mock_ensure_gemini):
     assert "--model" in call_args_model
     assert "gemini-pro" in call_args_model
 
-def test_gemini_prompt_combination(mock_subprocess, mock_ensure_gemini):
-    """Verify prompts are concatenated and sent to stdin."""
+def test_gemini_prompt_combination(mock_subprocess, mock_ensure_gemini, tmp_path):
+    """Verify system prompt is written to file and GEMINI_SYSTEM_MD env var is set."""
     mock_process = MagicMock()
     mock_process.pid = 222
     mock_process.stdin = MagicMock()
@@ -177,19 +177,38 @@ def test_gemini_prompt_combination(mock_subprocess, mock_ensure_gemini):
     system_prompt = "Be helpful."
     user_prompt = "Write code."
 
-    list(run_gemini_task(
-        user_prompt=user_prompt,
-        workdir=Path("."),
-        system_prompt=system_prompt,
-        profile=None,
-        sandbox="",
-        approval_mode="full-auto",
-        max_seconds=0,
-        max_events=10,
-        extra_cli_config={}
-    ))
+    # Create a mock config that returns no custom system prompt
+    mock_config = MagicMock()
+    mock_config.system_prompt = None  # No custom system prompt
+    mock_config.extra_config = {}  # No selected system prompt file
 
-    # Verify prompt is appended as positional arg
+    mock_config_manager = MagicMock()
+    mock_config_manager.return_value.load_config.return_value = mock_config
+
+    with patch("shinka.webui.cli_profiles.GeminiConfigManager", mock_config_manager):
+        list(run_gemini_task(
+            user_prompt=user_prompt,
+            workdir=tmp_path,  # Use tmp_path so system prompt file can be created
+            system_prompt=system_prompt,
+            profile=None,
+            sandbox="",
+            approval_mode="full-auto",
+            max_seconds=0,
+            max_events=10,
+            extra_cli_config={}
+        ))
+
+    # Verify user prompt is the positional arg (system prompt NOT concatenated)
     call_args = mock_subprocess.call_args[0][0]
-    assert call_args[-1].startswith(system_prompt)
-    assert user_prompt in call_args[-1]
+    assert call_args[-1] == user_prompt, "User prompt should be the final positional arg"
+
+    # Verify GEMINI_SYSTEM_MD env var is set to point to system prompt file
+    call_kwargs = mock_subprocess.call_args[1]
+    env = call_kwargs.get("env", {})
+    assert "GEMINI_SYSTEM_MD" in env, "GEMINI_SYSTEM_MD should be set for system prompts"
+
+    # Verify the system prompt file exists and contains the system prompt
+    sys_md_path = Path(env["GEMINI_SYSTEM_MD"])
+    assert sys_md_path.exists(), f"System prompt file should exist at {sys_md_path}"
+    sys_content = sys_md_path.read_text()
+    assert system_prompt in sys_content, "System prompt file should contain the system prompt"

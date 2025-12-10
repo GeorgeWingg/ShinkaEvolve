@@ -48,6 +48,7 @@ class PromptSampler:
         patch_type_probs: Optional[List[float]] = None,
         use_text_feedback: bool = False,
         agentic_mode: bool = False,
+        max_score: float = 1.0,
     ):
         if patch_types is None:
             patch_types = ["diff"]
@@ -67,6 +68,7 @@ class PromptSampler:
         # Whether to use text feedback in the prompt
         self.use_text_feedback = use_text_feedback
         self.agentic_mode = agentic_mode
+        self.max_score = max_score
 
     def initial_program_prompt(self) -> Tuple[str, str]:
         """Generate the prompt for the initial program."""
@@ -192,17 +194,20 @@ class PromptSampler:
                 language=self.language,
             )
         elif patch_type == "agentic":
-            # Task context goes in user prompt for agentic mode (see comment above)
+            # Task context goes in user prompt for agentic mode
             task_context = ""
             if self.task_sys_msg:
-                task_context = f"# Task Context\n\n{self.task_sys_msg}\n"
+                task_context = f"# Task\n\n{self.task_sys_msg}\n"
+
+            # Build score context based on whether we have a score
+            if parent.combined_score is not None and parent.combined_score > 0:
+                score_context = f"Current score: {parent.combined_score:.3f} out of {self.max_score:.3g}. Try to improve it."
+            else:
+                score_context = "This is a fresh start. Create what you need."
+
             iter_msg = AGENTIC_ITER_MSG.format(
                 task_context=task_context,
-                language=self.language,
-                code_content=parent.code,
-                performance_metrics=perf_str(
-                    parent.combined_score, parent.public_metrics
-                ),
+                score_context=score_context,
                 text_feedback_section=text_feedback_section,
             )
         elif patch_type == "paper":

@@ -9,39 +9,56 @@ from shinka.database import Program
 from shinka.llm import LLMClient
 from shinka.prompts import (
     construct_individual_program_msg,
+    # Non-agentic mode prompts (legacy)
     META_STEP1_SYSTEM_MSG,
     META_STEP1_USER_MSG,
     META_STEP2_SYSTEM_MSG,
     META_STEP2_USER_MSG,
     META_STEP3_SYSTEM_MSG,
     META_STEP3_USER_MSG,
+    # Agentic mode prompts (new - agent explores results directory)
+    AGENTIC_META_SYSTEM_MSG,
+    AGENTIC_META_STEP1_USER_MSG,
+    AGENTIC_META_STEP2_USER_MSG,
+    AGENTIC_META_STEP3_USER_MSG,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class MetaSummarizer:
-    """Handles meta-level summarization and recommendation generation."""
+    """Handles meta-level summarization and recommendation generation.
+
+    Supports two modes:
+    1. Non-agentic (legacy): Uses LLMClient with piped-in code/metrics
+    2. Agentic: Agent runs in results_dir and explores files directly
+    """
 
     def __init__(
         self,
         meta_llm_client: Optional[LLMClient] = None,
         agent_runner: Optional[Callable[..., Iterator[Dict[str, Any]]]] = None,
         agent_workdir: Optional[Path] = None,
+        results_dir: Optional[Path] = None,
         language: str = "python",
         use_text_feedback: bool = False,
         max_recommendations: int = 5,
+        agentic_mode: bool = False,
     ):
         self.meta_llm_client = meta_llm_client
         self.agent_runner = agent_runner
+        # For non-agentic mode: temp workdir for agent queries
         self.agent_workdir = agent_workdir or Path(tempfile.gettempdir()) / "shinka_meta_queries"
+        # For agentic mode: results directory where agent explores
+        self.results_dir = results_dir
         self.language = language
         self.use_text_feedback = use_text_feedback
         self.max_recommendations = max_recommendations
+        self.agentic_mode = agentic_mode
 
         # Meta state
         self.meta_summary = None
-        self.meta_scratch_pad = None  # New: Global insights scratchpad
+        self.meta_scratch_pad = None  # Global insights scratchpad
         self.meta_recommendations = None
         self.meta_recommendations_history = []
 
@@ -50,6 +67,11 @@ class MetaSummarizer:
 
         # Track the accumulated count of programs processed in meta updates
         self.total_programs_processed = 0
+
+    def set_results_dir(self, results_dir: Path) -> None:
+        """Set the results directory (called after runner initializes it)."""
+        self.results_dir = results_dir
+        logger.debug(f"MetaSummarizer results_dir set to: {results_dir}")
 
     def add_evaluated_program(self, program: Program) -> None:
         """Add newly evaluated program to the tracking list."""
@@ -95,8 +117,8 @@ class MetaSummarizer:
     ) -> Tuple[Optional[str], float]:
         """Query using CLI backend (agent_runner), extract text from events.
 
-        This allows MetaSummarizer to use CLI backends (Codex/Gemini/Claude)
-        instead of direct LLMClient for agentic mode parity.
+        This is the LEGACY non-agentic mode that runs in a temp directory.
+        For agentic mode, use _query_via_agent_agentic() instead.
 
         Args:
             user_msg: The user prompt to send
@@ -155,6 +177,105 @@ class MetaSummarizer:
             except Exception:
                 pass
 
+    def _query_via_agent_agentic(
+        self, user_msg: str, system_msg: str, output_file: Optional[str] = None
+    ) -> Tuple[Optional[str], float]:
+        """Query using CLI backend in AGENTIC mode - agent runs in results_dir.
+
+        The agent explores the results directory, reads gen_*/results/metrics.json
+        and gen_*/main.py files, and writes output to _meta/ directory.
+
+        Args:
+            user_msg: The user prompt (tells agent what to analyze and where to write)
+            system_msg: The system prompt/instructions
+            output_file: Optional path relative to results_dir to read output from
+                        (e.g., "_meta/insights.md")
+
+        Returns:
+            Tuple of (response_text, cost). Response is read from output_file if specified,
+            otherwise extracted from agent events.
+        """
+        if not self.agent_runner:
+            return None, 0.0
+
+        if not self.results_dir or not self.results_dir.exists():
+            logger.error(f"Agentic meta: results_dir not set or doesn't exist: {self.results_dir}")
+            return None, 0.0
+
+        # Ensure _meta directory exists
+        meta_dir = self.results_dir / "_meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (meta_dir / "summaries").mkdir(parents=True, exist_ok=True)
+
+        try:
+            logger.info(f"Agentic meta: Running agent in {self.results_dir}")
+
+            # Run agent in results directory
+            for event in self.agent_runner(
+                user_prompt=user_msg,
+                workdir=self.results_dir,
+                system_prompt=system_msg,
+                profile=None,
+                sandbox="workspace-write",  # Agent can read gen_*/ and write to _meta/
+                approval_mode="full-auto",
+                max_seconds=600,  # Give more time for exploration
+                max_events=200,
+                extra_cli_config={},
+                session_kind="meta",
+            ):
+                # Log progress
+                if event.get("type") == "agent_message":
+                    item = event.get("item", {})
+                    text = item.get("text", "")
+                    if text:
+                        logger.debug(f"Agentic meta agent: {text[:100]}...")
+
+            # Read output from file if specified
+            if output_file:
+                output_path = self.results_dir / output_file
+                if output_path.exists():
+                    content = output_path.read_text(encoding="utf-8")
+                    logger.info(f"Agentic meta: Read {len(content)} chars from {output_file}")
+                    return content.strip(), 0.0
+                else:
+                    logger.warning(f"Agentic meta: Output file not found: {output_path}")
+                    return None, 0.0
+            else:
+                # No output file specified - just return success indicator
+                return "OK", 0.0
+
+        except Exception as e:
+            logger.error(f"Agentic meta query failed: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return None, 0.0
+
+    def _read_meta_file(self, relative_path: str) -> Optional[str]:
+        """Read a file from the _meta directory."""
+        if not self.results_dir:
+            return None
+        file_path = self.results_dir / relative_path
+        if file_path.exists():
+            return file_path.read_text(encoding="utf-8")
+        return None
+
+    def _read_all_summaries(self) -> Optional[str]:
+        """Read all individual summaries from _meta/summaries/."""
+        if not self.results_dir:
+            return None
+        summaries_dir = self.results_dir / "_meta" / "summaries"
+        if not summaries_dir.exists():
+            return None
+
+        summaries = []
+        for summary_file in sorted(summaries_dir.glob("gen_*.md")):
+            content = summary_file.read_text(encoding="utf-8")
+            summaries.append(content)
+
+        if summaries:
+            return "\n\n---\n\n".join(summaries)
+        return None
+
     def update_meta_memory(
         self, best_program: Optional[Program] = None
     ) -> Tuple[Optional[str], float]:
@@ -162,6 +283,9 @@ class MetaSummarizer:
         Perform 3-step meta-analysis and update internal state.
         Returns tuple of (updated_recommendations, total_cost) or
         (None, 0.0) if no update occurred.
+
+        In agentic mode, the agent explores results_dir and writes to _meta/.
+        In non-agentic mode, code/metrics are piped into the LLM.
         """
         if not self.meta_llm_client and not self.agent_runner:
             logger.warning("No meta LLM client or agent_runner configured")
@@ -178,6 +302,19 @@ class MetaSummarizer:
 
         total_meta_cost = 0.0
 
+        # Use agentic mode if enabled and we have both agent_runner and results_dir
+        use_agentic = (
+            self.agentic_mode
+            and self.agent_runner
+            and self.results_dir
+            and self.results_dir.exists()
+        )
+
+        if use_agentic:
+            logger.info("==> Meta-analysis using AGENTIC mode (agent explores results_dir)")
+            return self._update_meta_memory_agentic(programs_to_analyze, best_program)
+
+        # Non-agentic mode (legacy)
         try:
             # Step 1: Create individual program summaries
             individual_summaries, step1_cost = self._step1_individual_summaries(
@@ -249,6 +386,118 @@ class MetaSummarizer:
                 else None
             ),
             total_meta_cost,
+        )
+
+    def _update_meta_memory_agentic(
+        self, programs_to_analyze: List[Program], best_program: Optional[Program] = None
+    ) -> Tuple[Optional[str], float]:
+        """
+        Agentic mode meta-analysis: agent explores results_dir and writes to _meta/.
+
+        The agent reads gen_*/results/metrics.json and gen_*/main.py directly,
+        then writes summaries, insights, and recommendations to _meta/.
+        """
+        total_cost = 0.0
+
+        # Determine generation range to analyze
+        generations = sorted(set(p.generation for p in programs_to_analyze))
+        if not generations:
+            logger.warning("No generations to analyze")
+            return None, 0.0
+
+        start_gen = min(generations)
+        end_gen = max(generations)
+
+        # Get best program info
+        best_gen = best_program.generation if best_program else end_gen
+        best_score = best_program.combined_score if best_program else 0.0
+
+        try:
+            # Step 1: Agent analyzes programs and writes to _meta/summaries/
+            logger.info(f"==> Agentic Step 1: Analyzing generations {start_gen}-{end_gen}")
+            user_msg = AGENTIC_META_STEP1_USER_MSG.format(
+                start_gen=start_gen,
+                end_gen=end_gen,
+            )
+            result, cost = self._query_via_agent_agentic(
+                user_msg, AGENTIC_META_SYSTEM_MSG, output_file=None
+            )
+            total_cost += cost
+            if result is None:
+                logger.error("Agentic Step 1 failed")
+                return None, total_cost
+
+            # Step 2: Agent generates global insights
+            logger.info(f"==> Agentic Step 2: Generating global insights (best: gen {best_gen})")
+            user_msg = AGENTIC_META_STEP2_USER_MSG.format(
+                best_gen=best_gen,
+                best_score=f"{best_score:.4f}",
+            )
+            result, cost = self._query_via_agent_agentic(
+                user_msg, AGENTIC_META_SYSTEM_MSG, output_file="_meta/insights.md"
+            )
+            total_cost += cost
+            if result is None:
+                logger.error("Agentic Step 2 failed - no insights generated")
+                return None, total_cost
+            global_insights = result
+
+            # Step 3: Agent generates recommendations
+            logger.info(f"==> Agentic Step 3: Generating recommendations")
+            user_msg = AGENTIC_META_STEP3_USER_MSG.format(
+                best_gen=best_gen,
+                best_score=f"{best_score:.4f}",
+                max_recommendations=self.max_recommendations,
+            )
+            result, cost = self._query_via_agent_agentic(
+                user_msg, AGENTIC_META_SYSTEM_MSG, output_file="_meta/recommendations.md"
+            )
+            total_cost += cost
+            if result is None:
+                logger.error("Agentic Step 3 failed - no recommendations generated")
+                return None, total_cost
+            recommendations = result
+
+            # Update internal state from files
+            all_summaries = self._read_all_summaries()
+            if all_summaries:
+                if self.meta_summary:
+                    self.meta_summary += "\n\n" + all_summaries
+                else:
+                    self.meta_summary = all_summaries
+
+            self.meta_scratch_pad = global_insights
+            self.meta_recommendations = recommendations
+
+            if recommendations:
+                self.meta_recommendations_history.append(recommendations)
+                logger.debug(
+                    f"Added recommendations to history "
+                    f"(total: {len(self.meta_recommendations_history)})"
+                )
+
+            logger.info(
+                f"==> Agentic meta-analysis completed (cost: ${total_cost:.4f})"
+            )
+
+        except Exception as e:
+            logger.error(f"Agentic meta-analysis failed: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return None, total_cost
+
+        # Clear processed programs
+        num_processed = len(self.evaluated_since_last_meta)
+        self.total_programs_processed += num_processed
+        self.evaluated_since_last_meta = []
+        logger.info(
+            f"Processed and cleared {num_processed} programs "
+            f"(total: {self.total_programs_processed})"
+        )
+
+        return (
+            self.meta_recommendations if isinstance(self.meta_recommendations, str) else None,
+            total_cost,
         )
 
     def get_unprocessed_program_count(self) -> int:
