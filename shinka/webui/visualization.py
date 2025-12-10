@@ -47,6 +47,64 @@ DEFAULT_PORT = 8000
 CACHE_EXPIRATION_SECONDS = 5  # Cache data for 5 seconds
 db_cache: Dict[str, Tuple[float, Any]] = {}
 
+# Large metadata fields to exclude from initial /get_programs response
+# These can contain MB of data (session transcripts, command outputs, etc.)
+# and are only needed when viewing a specific program's details
+LARGE_METADATA_FIELDS = {
+    "agent_session_events",  # Full session event log (can be 100s of MB)
+    "agent_commands",  # Command objects with full stdout/stderr
+    "agent_session_log",  # Session transcript text
+    "agent_changed_files",  # Full file contents (can be 100s of MB)
+    "agent_code_diffs",  # Full diffs for all changed files (can be 100s of MB)
+    "agent_binary_files",  # Binary file data (can be 100s of MB)
+    "agent_workspace_snapshot",  # Full workspace state
+    "events_preview",  # Preview of events (still can be large)
+    "commands_run",  # Evaluator commands with full output
+    "stdout_log",  # Concatenated stdout
+    "stderr_log",  # Concatenated stderr
+    "embedding_corpus_meta",  # Embedding corpus metadata (can be large)
+}
+
+# Fields inside nested dicts (like agentic_evaluator) to also filter
+LARGE_NESTED_FIELDS = {
+    "agentic_evaluator": {"commands_run", "events_preview", "stdout_log", "stderr_log"},
+}
+
+
+def filter_large_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Filter out large metadata fields that aren't needed for tree visualization.
+    Returns a shallow copy with large fields replaced by size indicators.
+    """
+    if not metadata:
+        return metadata
+
+    filtered = {}
+    for key, value in metadata.items():
+        if key in LARGE_METADATA_FIELDS:
+            # Replace with size indicator so frontend knows data exists
+            if isinstance(value, (list, str)):
+                filtered[f"_{key}_size"] = len(value)
+            elif isinstance(value, dict):
+                filtered[f"_{key}_size"] = len(json.dumps(value)) if value else 0
+            # Don't include the actual large value
+        elif key in LARGE_NESTED_FIELDS and isinstance(value, dict):
+            # Filter nested dict (e.g., agentic_evaluator)
+            nested_filtered = {}
+            for nested_key, nested_value in value.items():
+                if nested_key in LARGE_NESTED_FIELDS[key]:
+                    if isinstance(nested_value, (list, str)):
+                        nested_filtered[f"_{nested_key}_size"] = len(nested_value)
+                    elif isinstance(nested_value, dict):
+                        nested_filtered[f"_{nested_key}_size"] = len(json.dumps(nested_value)) if nested_value else 0
+                else:
+                    nested_filtered[nested_key] = nested_value
+            filtered[key] = nested_filtered
+        else:
+            filtered[key] = value
+
+    return filtered
+
 # Track additional results directories from UI-launched runs (outside the server's results/ dir)
 # This allows the UI to find databases in external workspaces
 launched_run_roots: set = set()
@@ -73,6 +131,11 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/get_programs" and "db_path" in query:
             db_path = query["db_path"][0]
             return self.handle_get_programs(db_path)
+
+        if path == "/get_program_details" and "db_path" in query and "program_id" in query:
+            db_path = query["db_path"][0]
+            program_id = query["program_id"][0]
+            return self.handle_get_program_details(db_path, program_id)
 
         if path == "/get_meta_files" and "db_path" in query:
             db_path = query["db_path"][0]
@@ -103,6 +166,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/codex_usage":
             return self.handle_codex_usage()
+
+        if path == "/api/gemini_usage":
+            return self.handle_gemini_usage()
 
         if path == "/api/credentials":
             return self.handle_credentials_get()
@@ -439,6 +505,56 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             print(f"[SERVER] Error getting Gemini status: {e}")
             self.send_json_response({
                 "available": False,
+                "authenticated": False,
+                "error": str(e),
+            })
+
+    def handle_gemini_usage(self):
+        """Return Gemini usage and auth status (parity with Codex)."""
+        print("[SERVER] Received request for Gemini usage")
+        try:
+            from shinka.tools.gemini_usage import collect_usage, GeminiUsageError
+            from shinka.tools.auth_status import check_gemini_auth
+
+            # First check auth status
+            auth_status = check_gemini_auth()
+            if not auth_status.available:
+                self.send_json_response({
+                    "authenticated": False,
+                    "error": auth_status.error or "Not authenticated",
+                })
+                return
+
+            # Try to get usage data
+            try:
+                usage = collect_usage()
+                self.send_json_response({
+                    "authenticated": True,
+                    "plan": usage.plan,
+                    "email": usage.email,
+                    "windows": [
+                        {
+                            "label": w.label,
+                            "percent_used": w.percent_used,
+                            "window_minutes": w.window_minutes,
+                            "reset_at": w.reset_at,
+                            "reset_at_local": w.reset_at_local,
+                        }
+                        for w in usage.windows
+                    ],
+                })
+            except GeminiUsageError as e:
+                # Auth file exists but usage fetch failed
+                self.send_json_response({
+                    "authenticated": True,
+                    "plan": auth_status.plan,
+                    "email": auth_status.email,
+                    "error": str(e),
+                    "windows": [],
+                })
+        except Exception as e:
+            print(f"[SERVER] Error getting Gemini usage: {e}")
+            self.send_json_response({
                 "authenticated": False,
                 "error": str(e),
             })
@@ -1558,9 +1674,16 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 programs = db.get_all_programs()
 
                 # Convert Program objects to dicts for JSON
-                programs_dict = [p.to_dict() for p in programs]
+                # Filter out large metadata fields to reduce payload size
+                # (full metadata available via /get_program_details endpoint)
+                programs_dict = []
+                for p in programs:
+                    p_dict = p.to_dict()
+                    if p_dict.get("metadata"):
+                        p_dict["metadata"] = filter_large_metadata(p_dict["metadata"])
+                    programs_dict.append(p_dict)
 
-                # Update cache
+                # Update cache (with filtered data)
                 db_cache[db_path] = (time.time(), programs_dict)
 
                 self.send_json_response(programs_dict)
@@ -1610,6 +1733,67 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         db.close()
                     except Exception as e:
                         print(f"[SERVER] Warning: Error closing database: {e}")
+
+    def handle_get_program_details(self, db_path: str, program_id: str):
+        """Fetch full details for a single program, including all metadata.
+
+        This endpoint returns unfiltered data for viewing program details,
+        agent session transcripts, command outputs, etc.
+        """
+        print(f"[SERVER] Fetching program details: {program_id} from {db_path}")
+
+        abs_db_path = self._resolve_db_path(db_path)
+        if not os.path.exists(abs_db_path):
+            self.send_error(404, f"Database file not found: {abs_db_path}")
+            return
+
+        db = None
+        try:
+            config = DatabaseConfig(db_path=abs_db_path)
+            db = ProgramDatabase(config, read_only=True)
+
+            if db.cursor:
+                db.cursor.execute("PRAGMA busy_timeout = 10000;")
+                db.cursor.execute("PRAGMA journal_mode = WAL;")
+
+            # Query for single program by ID
+            db.cursor.execute(
+                """
+                SELECT p.*,
+                       CASE WHEN a.program_id IS NOT NULL THEN 1 ELSE 0 END as in_archive
+                FROM programs p
+                LEFT JOIN archive a ON p.id = a.program_id
+                WHERE p.id = ?
+                """,
+                (program_id,)
+            )
+            row = db.cursor.fetchone()
+            if row is None:
+                self.send_error(404, f"Program not found: {program_id}")
+                return
+
+            program = db._program_from_row(row)
+            if program is None:
+                self.send_error(500, f"Failed to parse program: {program_id}")
+                return
+
+            # Return full unfiltered program data
+            program_dict = program.to_dict()
+            self.send_json_response(program_dict)
+            print(f"[SERVER] Successfully served program details for {program_id}")
+
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+            print(f"[SERVER] Database error fetching program details: {e}")
+            self.send_error(500, f"Database error: {str(e)}")
+        except Exception as e:
+            print(f"[SERVER] Error fetching program details: {e}")
+            self.send_error(500, f"Error: {str(e)}")
+        finally:
+            if db and hasattr(db, "close"):
+                try:
+                    db.close()
+                except Exception as e:
+                    print(f"[SERVER] Warning: Error closing database: {e}")
 
     def handle_get_meta_files(self, db_path: str):
         """List available meta_{gen}.txt files for a given database."""
@@ -3034,6 +3218,14 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Job settings
             cmd_parts.append(f"evo_config.job_type={ui_config.job_type}")
             
+            # Large codebase / embedding scale settings
+            cmd_parts.append(f"evo_config.embedding_max_files={ui_config.embedding_max_files}")
+            cmd_parts.append(f"evo_config.embedding_max_total_bytes={ui_config.embedding_max_total_bytes}")
+            cmd_parts.append(f"evo_config.embedding_max_bytes_per_file={ui_config.embedding_max_bytes_per_file}")
+            if ui_config.cleanup_old_generations:
+                cmd_parts.append(f"evo_config.cleanup_old_generations=true")
+                cmd_parts.append(f"evo_config.cleanup_keep_last_n={ui_config.cleanup_keep_last_n}")
+            
             # Run Name
             if ui_config.run_name:
                 cmd_parts.append(f"run_name={ui_config.run_name}")
@@ -3116,13 +3308,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"[SERVER] Final run name for isolated workspace: {final_run_name}")
 
             if ui_config.source_type == "git":
-                # Git source - clone to local path if provided, otherwise use temp dir
-                # The local_path field specifies where to store results (and clone the repo)
+                # Git source - clone to specified workspace path if provided, otherwise use temp dir
                 manager = GitWorktreeManager()  # Create manager for git operations
 
-                if ui_config.local_path:
-                    # User specified a local path - clone there
-                    local_results_root = Path(ui_config.local_path).resolve()
+                if ui_config.git_workspace_path:
+                    # User specified a workspace path for the git clone
+                    local_results_root = Path(ui_config.git_workspace_path).resolve()
                     base_run_name = ui_config.run_name or "evolution_run"
                     base_run_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in base_run_name)
 

@@ -28,6 +28,7 @@ class UIRunConfig:
     local_path: str = ""
     git_url: str = ""
     git_branch: str = "main"
+    git_workspace_path: str = ""  # Where to clone git repos (empty = auto)
     use_worktree: bool = True
     init_program_path: str = ""
     init_support_dir: Optional[str] = None
@@ -36,6 +37,13 @@ class UIRunConfig:
         default_factory=lambda: ["results/**", "__pycache__/**", ".git/**"]
     )
     language: str = "python"
+    
+    # Embedding scalability settings (for large codebases)
+    embedding_max_files: int = 500
+    embedding_max_total_bytes: int = 2_000_000  # 2MB
+    embedding_max_bytes_per_file: int = 500_000  # 500KB
+    cleanup_old_generations: bool = False
+    cleanup_keep_last_n: int = 50
 
     # Agent configuration
     agentic_mode: bool = True
@@ -75,14 +83,18 @@ class UIRunConfig:
     migration_rate: float = 0.1
     island_elitism: bool = True
 
-    # Stopping conditions
-    target_score: Optional[float] = None
+    # Score configuration
+    max_score: float = 1.0  # Maximum possible score (defines the scale)
     max_runtime_hours: int = 0
     max_api_cost: float = 0.0
 
-    # Meta-learning configuration
+    # Meta-learning / Scratchpad configuration
     meta_rec_interval: Optional[int] = None
     meta_llm_models: Optional[List[str]] = None
+    scratchpad_enabled: bool = False
+    scratchpad_backend: str = "codex"  # "codex" | "gemini" | "claude" | "shinka"
+    scratchpad_interval: int = 5
+    scratchpad_max_recommendations: int = 5
 
     # Job configuration
     job_type: str = "local"  # "local" | "slurm_conda" | "slurm_docker"
@@ -181,10 +193,23 @@ class RunConfigBuilder:
             agentic_mode=self.ui.agentic_mode,
             agentic=agentic_cfg,
             evaluator=evaluator_cfg,
-            meta_rec_interval=self.ui.meta_rec_interval,
+            # Scratchpad/Meta-learning: if enabled, use scratchpad settings
+            meta_rec_interval=(
+                self.ui.scratchpad_interval
+                if self.ui.scratchpad_enabled
+                else self.ui.meta_rec_interval
+            ),
             meta_llm_models=self.ui.meta_llm_models,
+            meta_max_recommendations=self.ui.scratchpad_max_recommendations,
+            meta_backend=self.ui.scratchpad_backend if self.ui.scratchpad_enabled else None,
             embedding_include_globs=self.ui.include_patterns,
             embedding_exclude_globs=self.ui.exclude_patterns,
+            embedding_max_files=self.ui.embedding_max_files,
+            embedding_max_total_bytes=self.ui.embedding_max_total_bytes,
+            embedding_max_bytes_per_file=self.ui.embedding_max_bytes_per_file,
+            cleanup_old_generations=self.ui.cleanup_old_generations,
+            cleanup_keep_last_n=self.ui.cleanup_keep_last_n,
+            max_score=self.ui.max_score,
         )
 
     def build_database_config(self) -> DatabaseConfig:
@@ -272,6 +297,7 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["local_path"] = cb.get("local_path", "")
     flat["git_url"] = cb.get("git_url", "")
     flat["git_branch"] = cb.get("git_branch", "main")
+    flat["git_workspace_path"] = cb.get("git_workspace_path", "")
     # Support both new "isolate_workspace" and old "use_worktree" for backwards compatibility
     flat["use_worktree"] = cb.get("isolate_workspace", cb.get("use_worktree", True))
     flat["init_program_path"] = cb.get("init_program_path", "initial.py")
@@ -279,6 +305,11 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["include_patterns"] = cb.get("include_patterns", ["**/*.py"])
     flat["exclude_patterns"] = cb.get("exclude_patterns", ["results/**"])
     flat["language"] = cb.get("language", "python")
+    flat["embedding_max_files"] = cb.get("embedding_max_files", 500)
+    flat["embedding_max_total_bytes"] = cb.get("embedding_max_total_bytes", 2_000_000)
+    flat["embedding_max_bytes_per_file"] = cb.get("embedding_max_bytes_per_file", 500_000)
+    flat["cleanup_old_generations"] = cb.get("cleanup_old_generations", False)
+    flat["cleanup_keep_last_n"] = cb.get("cleanup_keep_last_n", 50)
 
     # Agent
     ag = nested.get("agent", {})
@@ -318,11 +349,18 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["migration_interval"] = run.get("migration_interval", 10)
     flat["migration_rate"] = run.get("migration_rate", 0.1)
     flat["island_elitism"] = run.get("island_elitism", True)
-    flat["target_score"] = run.get("target_score")
+    flat["max_score"] = run.get("max_score", 1.0)
     flat["max_runtime_hours"] = run.get("max_runtime_hours", 0)
     flat["max_api_cost"] = run.get("max_api_cost", 0)
     flat["meta_rec_interval"] = run.get("meta_rec_interval")
     flat["meta_llm_models"] = run.get("meta_llm_models")
+
+    # Scratchpad
+    sp = nested.get("scratchpad", {})
+    flat["scratchpad_enabled"] = sp.get("enabled", False)
+    flat["scratchpad_backend"] = sp.get("backend", "codex")
+    flat["scratchpad_interval"] = sp.get("interval", 5)
+    flat["scratchpad_max_recommendations"] = sp.get("max_recommendations", 5)
 
     # Job
     job = nested.get("job", {})

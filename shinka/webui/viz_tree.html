@@ -11305,6 +11305,7 @@ ${'='.repeat(80)}
         let fishAnimationFrame = null;
         let swimmingFish = [];
         let fishPhase = 'idle'; // 'idle', 'launching', 'swimming', 'returning'
+        let fishFullySettled = false; // Track if fish have fully returned to home positions
         let launchFrame = 0;
         let fishPondBounds = { width: 0, height: 0 };
         let logoCenter = { x: 0, y: 0 };
@@ -11459,6 +11460,7 @@ ${'='.repeat(80)}
             hoverZone.onmouseenter = () => {
                 if (fishSwimActive && fishPhase === 'swimming') {
                     fishPhase = 'returning';
+                    fishFullySettled = false; // Reset - fish are not yet settled
                     // Show visual feedback - grey circle
                     hoverZone.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
                 }
@@ -11466,7 +11468,13 @@ ${'='.repeat(80)}
 
             hoverZone.onmouseleave = () => {
                 if (fishSwimActive && fishPhase === 'returning') {
-                    fishPhase = 'swimming';
+                    if (fishFullySettled) {
+                        // Fish have fully returned - stop swimming and keep them in place
+                        stopFishSwim();
+                    } else {
+                        // Fish haven't settled yet - resume swimming
+                        fishPhase = 'swimming';
+                    }
                     // Hide visual feedback
                     hoverZone.style.backgroundColor = 'transparent';
                 }
@@ -11696,7 +11704,11 @@ ${'='.repeat(80)}
                     return true;
                 });
 
-                // When all fish are settled at home, they stay visible in position
+                // When all fish are settled at home, mark as fully settled
+                if (allSettled && swimmingFish.length === fishPositions.length) {
+                    fishFullySettled = true;
+                }
+
                 // No logo crossfade - fish remain as the visual
             }
             else if (fishPhase === 'swimming') {
@@ -20596,6 +20608,19 @@ ${'='.repeat(80)}
                                     <label for="git-branch">Branch</label>
                                     <input type="text" id="git-branch" value="main">
                                 </div>
+                                <div class="form-group">
+                                    <label for="git-workspace-path">Workspace Location</label>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="text" id="git-workspace-path" placeholder="/path/to/workspace (leave empty for auto)" style="flex: 1;">
+                                        <button type="button" onclick="openFolderPicker('git-workspace-path')" title="Browse for folder" style="padding: 8px 12px; background: var(--primary-color, #4299e1); border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s ease, transform 0.1s ease;" onmouseover="this.style.background='#3182ce'" onmouseout="this.style.background='var(--primary-color, #4299e1)'">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="none">
+                                                <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V6h5.17l2 2H20v10z"/>
+                                                <path d="M4 6h5.17l2 2H20v10H4z" fill-opacity="0.3"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <span class="help-text">Where to clone the repo. If empty, uses /tmp/shinka_workspaces/</span>
+                                </div>
                             </div>
                         </div>
                         <div class="form-section">
@@ -21543,15 +21568,16 @@ ${'='.repeat(80)}
         }
 
         // Open folder picker - uses native OS dialog
-        async function openFolderPicker() {
-            const currentValue = document.getElementById('local-path').value;
+        async function openFolderPicker(targetInputId = 'local-path') {
+            const targetInput = document.getElementById(targetInputId);
+            const currentValue = targetInput ? targetInput.value : '';
 
             try {
                 const response = await fetch(`/api/folder_picker_native?initial_dir=${encodeURIComponent(currentValue || '')}`);
                 const data = await response.json();
 
                 if (data.ok && data.path) {
-                    document.getElementById('local-path').value = data.path;
+                    if (targetInput) targetInput.value = data.path;
                     return;
                 }
 
@@ -21700,6 +21726,7 @@ ${'='.repeat(80)}
                     local_path: document.getElementById('local-path').value,
                     git_url: document.getElementById('git-url').value,
                     git_branch: document.getElementById('git-branch').value,
+                    git_workspace_path: document.getElementById('git-workspace-path').value,
                     isolate_workspace: document.getElementById('isolate-workspace').checked,
                     // Storage & Performance settings (convert UI values to bytes)
                     embedding_max_files: parseInt(document.getElementById('embedding-max-files').value) || 500,
@@ -21754,6 +21781,7 @@ ${'='.repeat(80)}
                 document.getElementById('local-path').value = cb.local_path || '';
                 document.getElementById('git-url').value = cb.git_url || '';
                 document.getElementById('git-branch').value = cb.git_branch || 'main';
+                document.getElementById('git-workspace-path').value = cb.git_workspace_path || '';
                 document.getElementById('isolate-workspace').checked = cb.isolate_workspace !== false;
                 // Storage & Performance settings (convert bytes to UI values)
                 document.getElementById('embedding-max-files').value = cb.embedding_max_files || 500;
