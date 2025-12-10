@@ -30,7 +30,8 @@
         #tree-panel {
             width: 50%;
             height: 100%;
-            overflow: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
             min-width: 200px;
             max-width: 80%;
             padding: 15px 20px;
@@ -159,6 +160,26 @@
             /* Set a fixed height */
             flex-shrink: 0;
             /* Prevent this container from shrinking */
+            scrollbar-width: thin;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #tabs::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        #tabs::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        #tabs::-webkit-scrollbar-thumb {
+            background-color: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        #tabs::-webkit-scrollbar-thumb:hover {
+            background-color: #a1a1a1;
         }
 
         .tab {
@@ -170,6 +191,8 @@
             background-color: #f1f1f1;
             border-top-left-radius: 5px;
             border-top-right-radius: 5px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .tab.active {
@@ -2010,9 +2033,10 @@
         /* Collapsible JSON/details with terminal style */
         .terminal-block {
             margin-top: 8px;
-            border-radius: 8px;
+            border-radius: 6px;
             overflow: hidden;
-            border: 1px solid #30363d;
+            border: 1px solid #d0d7de;
+            background: #ffffff;
         }
 
         .terminal-header {
@@ -2020,13 +2044,14 @@
             align-items: center;
             justify-content: space-between;
             padding: 8px 12px;
-            background: #21262d;
+            background: #f6f8fa;
+            border-bottom: 1px solid #d0d7de;
             cursor: pointer;
             user-select: none;
         }
 
         .terminal-header:hover {
-            background: #30363d;
+            background: #eaeef2;
         }
 
         .terminal-title {
@@ -2034,16 +2059,16 @@
             align-items: center;
             gap: 8px;
             font-size: 12px;
-            font-weight: 500;
-            color: #c9d1d9;
+            font-weight: 600;
+            color: #24292f;
         }
 
         .terminal-title-icon {
-            color: #8b949e;
+            color: #57606a;
         }
 
         .terminal-chevron {
-            color: #8b949e;
+            color: #57606a;
             transition: transform 0.2s;
             font-size: 10px;
         }
@@ -2054,10 +2079,11 @@
 
         .terminal-content {
             display: none;
-            background: #0d1117;
+            background: #ffffff;
             padding: 12px 16px;
             max-height: 400px;
             overflow: auto;
+            color: #24292f;
         }
 
         .terminal-block.expanded .terminal-content {
@@ -2068,17 +2094,15 @@
             margin: 0;
             font-family: 'SF Mono', Monaco, Consolas, monospace;
             font-size: 12px;
-            line-height: 1.5;
-            color: #c9d1d9;
-            white-space: pre-wrap;
-            word-break: break-word;
+            color: #24292f;
+            line-height: 1.45;
         }
 
-        .terminal-content .json-key { color: #7ee787; }
-        .terminal-content .json-string { color: #a5d6ff; }
-        .terminal-content .json-number { color: #79c0ff; }
-        .terminal-content .json-boolean { color: #ff7b72; }
-        .terminal-content .json-null { color: #8b949e; }
+        .terminal-content .json-key { color: #24292f; font-weight: 500; }
+        .terminal-content .json-string { color: #0a3069; }
+        .terminal-content .json-number { color: #005cc5; }
+        .terminal-content .json-boolean { color: #d73a49; }
+        .terminal-content .json-null { color: #6a737d; }
 
         /* Tool use card improvements */
         .tool-info {
@@ -3550,9 +3574,33 @@
 
         #left-tabs {
             display: flex;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
             border-bottom: 1px solid #ddd;
             margin-top: 10px;
             flex-shrink: 0;
+            /* Scrollbar styling for consistency with right panel */
+            scrollbar-width: thin;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #left-tabs::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        #left-tabs::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        #left-tabs::-webkit-scrollbar-thumb {
+            background-color: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        #left-tabs::-webkit-scrollbar-thumb:hover {
+            background-color: #a1a1a1;
         }
 
         .left-tab {
@@ -3565,6 +3613,8 @@
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
             font-size: 14px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .left-tab.active {
@@ -5055,6 +5105,61 @@
             background: #f3f4f6;
         }
 
+        .compute-budget-control {
+            padding: 16px 24px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .compute-budget-control label {
+            display: block;
+            font-weight: 600;
+            font-size: 13px;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        .compute-budget-control .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .compute-budget-control .slider-label {
+            font-size: 12px;
+            color: #6b7280;
+            min-width: 40px;
+        }
+        .compute-budget-control .slider-label:last-child {
+            text-align: right;
+        }
+        #compute-budget {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(to right, #10b981, #f59e0b, #ef4444);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        #compute-budget::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        #compute-budget::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
         .new-run-tabs {
             display: flex;
             border-bottom: 1px solid #e5e7eb;
@@ -5238,6 +5343,92 @@
             margin-bottom: 12px;
         }
 
+        /* Subsection styling for grouped settings */
+        .subsection {
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: 6px;
+            border: 1px solid rgba(0, 0, 0, 0.04);
+        }
+
+        .subsection-header {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .subsection-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .subsection-header .help-text {
+            margin: 0;
+            font-size: 11px;
+        }
+
+        /* Input with suffix (e.g., "MB", "KB", "generations") */
+        .input-with-suffix {
+            display: flex;
+            align-items: center;
+            gap: 0;
+        }
+
+        .input-with-suffix input {
+            border-radius: 6px 0 0 6px !important;
+            border-right: none !important;
+            flex: 1;
+        }
+
+        .input-with-suffix .input-suffix {
+            padding: 8px 10px;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-left: none;
+            border-radius: 0 6px 6px 0;
+            font-size: 12px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+
+        /* Dependent field styling */
+        .dependent-field {
+            padding-left: 24px;
+            border-left: 2px solid #e5e7eb;
+        }
+
+        /* Empty state guidance styling */
+        .empty-state-guidance {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 48px 32px;
+            text-align: center;
+            color: #666;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #fafafa;
+        }
+
+        .empty-state-guidance .fish-pond {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
         .new-run-modal .modal-footer {
             padding: 16px 24px;
             border-top: 1px solid #e5e7eb;
@@ -5416,6 +5607,73 @@
             box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
         }
         /* ========== End New Run Modal Styles ========== */
+
+        /* ========== Sakana Fish Easter Egg ========== */
+        .sakana-logo-container {
+            position: relative;
+            width: 64px;
+            height: 64px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .sakana-logo-container:hover {
+            transform: scale(1.05);
+        }
+        .sakana-logo-container svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Swimming fish container - covers the entire table */
+        .fish-pond {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 10;
+        }
+
+        /* Individual swimming fish */
+        .swimming-fish {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            pointer-events: none;
+            transition: none;
+            will-change: transform;
+        }
+        .swimming-fish svg {
+            width: 100%;
+            height: 100%;
+        }
+        .swimming-fish.red-fish {
+            color: #db0d0f;
+        }
+        .swimming-fish.black-fish {
+            color: #000000;
+        }
+
+        /* Subtle wiggle animation for swimming */
+        @keyframes fish-wiggle {
+            0%, 100% { transform: scaleY(1); }
+            50% { transform: scaleY(0.95); }
+        }
+        .swimming-fish svg {
+            animation: fish-wiggle 0.3s ease-in-out infinite;
+        }
+
+        /* Click hint animation */
+        @keyframes gentle-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .sakana-logo-container.hint-active {
+            animation: gentle-pulse 2s ease-in-out infinite;
+        }
+        /* ========== End Sakana Fish Easter Egg ========== */
     </style>
 </head>
 
@@ -5457,6 +5715,25 @@
                 style="flex-grow: 1; overflow: hidden; position: relative; height: calc(100vh - 200px);">
                 <div id="tree-view" class="left-content-section active">
                     <div id="tree" style="height: 100%;"></div>
+                    <div id="tree-empty-state" class="empty-state-guidance" style="display: none;">
+                        <div class="fish-pond" id="tree-fish-pond"></div>
+                        <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+                            <div class="sakana-logo-container" id="tree-sakana-logo" onclick="startFishSwim('tree-fish-pond', 'tree-sakana-logo')" title="Click to release the fish!">
+                                <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+                                    <g transform="translate(0,400) scale(0.1,-0.1)" stroke="none">
+                                        <path class="fish black-fish" fill="#000000" d="M516 3373 c-17 -5 -18 -14 -14 -121 5 -132 31 -223 89 -315 44 -69 247 -277 271 -277 36 0 17 36 -57 110 -41 41 -75 77 -75 81 0 9 91 56 131 67 l36 10 6 -50 c14 -114 120 -265 143 -204 3 8 -8 32 -25 54 -60 73 -93 202 -53 202 41 0 124 -33 167 -65 47 -37 69 -43 81 -23 9 15 -54 70 -110 98 -23 11 -66 24 -96 30 -29 6 -55 12 -58 14 -8 8 28 103 52 134 l22 31 79 -79 c44 -44 85 -80 91 -80 7 0 15 8 19 18 5 13 -23 45 -117 137 -132 129 -211 180 -321 209 -60 16 -230 28 -261 19z m280 -76 c61 -23 115 -52 156 -84 l36 -29 -29 -44 c-26 -39 -59 -125 -59 -156 0 -6 -18 -14 -41 -18 -37 -6 -108 -38 -152 -69 -15 -10 -21 -8 -42 18 -71 88 -115 216 -115 340 l0 70 102 -6 c57 -4 121 -13 144 -22z"/>
+                                        <path class="fish black-fish" fill="#000000" d="M1623 3234 c-12 -32 5 -228 25 -284 41 -116 73 -162 200 -293 69 -70 131 -126 136 -124 31 10 14 44 -59 117 l-77 77 35 22 c32 19 110 51 127 51 4 0 10 -22 13 -49 7 -60 46 -144 86 -188 57 -63 80 -27 28 44 -37 50 -67 127 -67 168 0 21 5 25 30 25 43 0 123 -33 169 -69 21 -17 43 -31 49 -31 24 0 18 30 -11 58 -44 41 -103 70 -173 84 -32 7 -60 13 -62 14 -8 5 19 79 43 121 l27 45 78 -77 c73 -73 107 -90 117 -59 2 5 -54 67 -124 135 -143 140 -219 187 -348 214 -98 21 -234 20 -242 -1z m288 -62 c69 -24 102 -42 156 -81 l42 -30 -34 -56 c-18 -31 -39 -78 -46 -105 -12 -47 -14 -49 -60 -60 -27 -7 -73 -27 -103 -45 l-56 -33 -29 35 c-68 82 -111 212 -111 332 l0 74 93 -6 c51 -3 117 -14 148 -25z"/>
+                                        <path class="fish red-fish" fill="#db0d0f" d="M3165 2879 c-69 -15 -126 -40 -235 -102 -138 -78 -160 -95 -153 -112 8 -23 26 -18 118 35 48 28 90 50 95 50 13 0 32 -68 34 -122 l1 -49 -95 -2 c-79 -2 -103 -6 -145 -27 -85 -43 -64 -79 25 -41 62 27 200 31 200 6 0 -41 -59 -123 -121 -168 -41 -30 -49 -51 -25 -60 34 -13 136 86 175 170 l24 52 38 -21 c21 -12 53 -37 71 -55 l33 -34 -21 -17 c-12 -9 -56 -36 -98 -60 -73 -41 -93 -66 -62 -78 8 -3 72 27 143 68 164 93 262 186 316 298 40 83 74 198 64 222 -15 40 -273 71 -382 47z m270 -55 c73 -18 72 -13 34 -122 -33 -99 -113 -208 -192 -264 l-28 -20 -36 42 c-20 23 -60 55 -89 72 l-54 30 0 66 c-1 37 -7 85 -15 107 -8 22 -15 43 -15 46 0 7 97 44 135 52 50 11 201 6 260 -9z"/>
+                                        <path class="fish black-fish" fill="#000000" d="M753 2354 c-21 -9 -16 -177 7 -269 30 -118 77 -192 208 -327 63 -65 121 -118 129 -118 7 0 16 7 20 16 4 11 -19 41 -73 95 -65 65 -76 81 -64 90 34 22 87 47 123 57 l37 10 0 -33 c0 -101 122 -285 146 -221 4 9 -5 29 -20 47 -41 48 -66 105 -73 160 -5 44 -4 49 14 49 42 0 124 -32 168 -65 53 -41 78 -45 73 -13 -5 35 -101 95 -183 115 -38 9 -71 17 -73 19 -8 5 19 78 43 121 l27 45 84 -83 c80 -80 85 -83 101 -66 17 17 12 23 -107 140 -135 132 -213 182 -326 212 -62 16 -240 29 -261 19z m257 -70 c66 -19 133 -52 181 -91 l36 -29 -24 -34 c-27 -40 -63 -131 -63 -160 0 -15 -7 -20 -25 -20 -32 0 -99 -27 -148 -59 l-38 -25 -24 30 c-72 88 -115 215 -115 339 l0 78 83 -7 c45 -4 107 -14 137 -22z"/>
+                                        <path class="fish black-fish" fill="#000000" d="M1867 2123 c-13 -12 -7 -187 8 -250 29 -125 69 -187 209 -331 72 -73 135 -131 140 -129 31 10 14 44 -59 117 l-77 78 45 26 c39 23 98 46 118 46 3 0 9 -23 12 -52 11 -93 93 -227 130 -213 24 10 22 18 -18 74 -39 54 -65 119 -65 162 0 25 4 29 29 29 43 0 108 -26 162 -65 54 -39 64 -42 72 -21 14 36 -123 120 -215 132 -57 8 -59 16 -22 94 42 91 38 90 124 5 74 -73 107 -90 117 -59 2 6 -54 67 -125 136 -143 140 -219 186 -347 213 -71 15 -226 20 -238 8z m246 -62 c86 -23 122 -39 189 -88 l47 -34 -28 -42 c-28 -41 -61 -124 -61 -151 0 -8 -20 -19 -50 -26 -27 -6 -75 -27 -106 -46 -64 -39 -56 -42 -114 47 -48 73 -71 153 -77 262 l-6 97 65 0 c36 0 99 -9 141 -19z"/>
+                                        <path class="fish black-fish" fill="#000000" d="M1011 1236 c-11 -13 -13 -38 -8 -114 14 -203 55 -289 226 -464 68 -71 130 -128 138 -128 7 0 16 7 20 16 4 11 -19 41 -76 98 -80 80 -81 81 -58 96 34 22 89 47 118 54 25 6 27 3 33 -42 13 -90 104 -237 135 -218 19 12 12 34 -24 81 -32 43 -65 126 -65 167 0 40 129 7 202 -53 39 -31 68 -33 68 -4 0 37 -172 125 -245 125 -23 0 -25 3 -19 28 4 15 20 53 37 85 l30 58 82 -81 c58 -56 88 -78 99 -74 9 3 16 11 16 18 0 21 -234 245 -295 281 -86 51 -173 75 -295 82 -91 5 -107 3 -119 -11z m224 -51 c79 -17 173 -60 224 -103 l34 -28 -30 -42 c-17 -22 -38 -68 -47 -101 l-17 -60 -60 -17 c-33 -9 -79 -30 -101 -47 l-42 -30 -28 34 c-68 80 -117 229 -118 352 l0 57 58 0 c31 0 89 -7 127 -15z"/>
+                                    </g>
+                                </svg>
+                            </div>
+                            <span style="font-weight: 500; color: #24292f;">No evolution data loaded</span>
+                            <span style="font-size: 13px; color: #57606a;">Start a new run or select an existing result to visualize.</span>
+                        </div>
+                    </div>
                 </div>
                 <div id="table-view" class="left-content-section">
                     <div style="padding: 10px; border-bottom: 1px solid #ddd; background-color: #f8f9fa;">
@@ -7221,6 +7498,9 @@
                 // Initialize Agents tab structure immediately
                 initializeAgentsTab();
 
+                // Show empty state guidance initially (will be hidden when data loads)
+                updateEmptyStateVisibility(false);
+
                 // Initialize database list
                 findDatabases();
 
@@ -7401,6 +7681,14 @@
                 // Add left panel tab handling with state persistence
                 document.querySelectorAll('.left-tab').forEach(tab => {
                     tab.addEventListener('click', function () {
+                        // Stop fish animation when leaving Agents tab
+                        const previousTab = document.querySelector('.left-tab.active');
+                        if (previousTab && previousTab.getAttribute('data-tab') === 'codex-usage-view') {
+                            if (typeof stopFishSwim === 'function') {
+                                stopFishSwim();
+                            }
+                        }
+
                         document.querySelectorAll('.left-tab').forEach(t => t.classList.remove('active'));
                         document.querySelectorAll('.left-content-section').forEach(s => s.classList.remove('active'));
 
@@ -9013,13 +9301,30 @@ ${'='.repeat(80)}
                 });
         }
 
+        // Show/hide empty state guidance based on whether data is loaded
+        function updateEmptyStateVisibility(hasData) {
+            const treeEmptyState = document.getElementById('tree-empty-state');
+            const treeContainer = document.getElementById('tree');
+            
+            if (treeEmptyState) {
+                treeEmptyState.style.display = hasData ? 'none' : 'flex';
+            }
+            if (treeContainer) {
+                treeContainer.style.display = hasData ? 'block' : 'none';
+            }
+        }
+
         // Process the data and generate the tree
         async function processData(data) {
             if (!data || data.length === 0) {
                 console.error("[DEBUG] No data to process!");
                 document.getElementById("tree-legend").style.display = "none"; // Hide the legend when no data
+                updateEmptyStateVisibility(false);
                 return;
             }
+
+            // Hide empty state since we have data
+            updateEmptyStateVisibility(true);
 
             // Initialize Agents tab structure early
             initializeAgentsTab();
@@ -9331,16 +9636,27 @@ ${'='.repeat(80)}
                 }
 
                 const ancestorIds = new Set();
+                // Check if there are ANY correct nodes in the dataset - store globally for styling functions
+                window.hasAnyCorrectNodes = scoringNodes.some(d => d.correct === true || d.correct === 'true' || d.correct === 1);
                 if (bestNodeD3 && window.bestNodeId) {
-                    // Double-check: only populate ancestorIds if the best node is actually correct
+                    const hasAnyCorrectNodes = window.hasAnyCorrectNodes;
                     const bestNodeDataIsCorrect = bestNodeD3.data.correct === true || bestNodeD3.data.correct === 'true' || bestNodeD3.data.correct === 1;
+
                     if (bestNodeDataIsCorrect) {
+                        // Best node is correct - highlight path
                         bestNodeD3.ancestors().forEach(ancestor => {
                             ancestorIds.add(ancestor.data.id);
                         });
                         console.log("[DEBUG] Populated ancestorIds for correct best node:", window.bestNodeId.substring(0, 8), "path length:", ancestorIds.size);
+                    } else if (!hasAnyCorrectNodes) {
+                        // No correct nodes at all - still highlight path to best-scoring node
+                        bestNodeD3.ancestors().forEach(ancestor => {
+                            ancestorIds.add(ancestor.data.id);
+                        });
+                        console.log("[DEBUG] Populated ancestorIds for best-scoring node (no correct nodes in dataset):", window.bestNodeId.substring(0, 8), "path length:", ancestorIds.size);
                     } else {
-                        console.error("[DEBUG] ERROR: Not populating ancestorIds because best node is incorrect:", window.bestNodeId.substring(0, 8), "correct:", bestNodeD3.data.correct);
+                        // There are correct nodes but best isn't one - don't highlight
+                        console.warn("[DEBUG] Not populating ancestorIds - best node is not correct but other correct nodes exist:", window.bestNodeId.substring(0, 8), "correct:", bestNodeD3.data.correct);
                     }
                 } else {
                     console.log("[DEBUG] No ancestorIds populated - no valid best node found");
@@ -9525,11 +9841,11 @@ ${'='.repeat(80)}
                             // FORCE SINGLE PATH: Only check the first path
                             const singlePath = window.allBestPaths[0];
                             if (singlePath.pathIds.has(d.source.data.id) && singlePath.pathIds.has(d.target.data.id)) {
-                                // Additional safety: ensure both nodes are correct before highlighting
+                                // Allow highlighting if: both nodes are correct, OR no correct nodes exist in dataset
                                 const sourceCorrect = d.source.data.correct === true || d.source.data.correct === 'true' || d.source.data.correct === 1;
                                 const targetCorrect = d.target.data.correct === true || d.target.data.correct === 'true' || d.target.data.correct === 1;
-                                if (sourceCorrect && targetCorrect) {
-                                    return '#ff8c00'; // Always use orange for the single path
+                                if ((sourceCorrect && targetCorrect) || !window.hasAnyCorrectNodes) {
+                                    return '#ff8c00'; // Orange for the best path
                                 } else {
                                     console.log("[DEBUG] Blocking orange highlight for link with incorrect node(s):", d.source.data.id.substring(0, 8), "->", d.target.data.id.substring(0, 8));
                                     return "#999";
@@ -9743,10 +10059,10 @@ ${'='.repeat(80)}
                             // FORCE SINGLE PATH: Only check the first path
                             const singlePath = window.allBestPaths[0];
                             if (singlePath.pathIds.has(d.data.id)) {
-                                // Additional safety: ensure node is correct before highlighting
+                                // Allow highlighting if: node is correct, OR no correct nodes exist in dataset
                                 const nodeCorrect = d.data.correct === true || d.data.correct === 'true' || d.data.correct === 1;
-                                if (nodeCorrect) {
-                                    return '#ff8c00'; // Always use orange for the single path
+                                if (nodeCorrect || !window.hasAnyCorrectNodes) {
+                                    return '#ff8c00'; // Orange for the best path
                                 } else {
                                     console.log("[DEBUG] Blocking orange highlight for incorrect node:", d.data.id.substring(0, 8), "correct:", d.data.correct);
                                     return "#000";
@@ -10116,7 +10432,7 @@ ${'='.repeat(80)}
             container.innerHTML = `
                 <div class="codex-wrapper" style="padding: 20px; max-width: 1200px; margin: 0 auto;">
                     <div class="codex-dashboard">
-                        <h3 style="font-weight: 600; font-size: 18px; margin-bottom: 16px;">LLM Usage Overview</h3>
+                        <h3 style="font-weight: 600; font-size: 18px; margin-bottom: 16px;">Agents Overview</h3>
                         <div class="card-grid-wrapper" style="margin-bottom:30px;">
                         <div class="codex-card-grid" id="llm-card-grid">
                             <!-- ShinkaAgent Card -->
@@ -10156,9 +10472,9 @@ ${'='.repeat(80)}
                                         <button class="secondary" onclick="openApiKeyModal('codex')" style="background: white; border: 1px solid #d1d5da; color: #24292f; padding: 10px 16px; font-weight: 500; border-radius: 6px; width: 220px;">Use API Key</button>
                                     </div>
                                 </div>
-                                <div id="codex-usage-view-content" style="display: none; flex: 1; flex-direction: column;">
+                                <div id="codex-usage-view-content" style="display: none; flex: 1; flex-direction: column; overflow: hidden;">
                                     <div class="codex-card-subtitle" id="codex-last-refresh" style="margin-bottom:12px; flex-shrink: 0;">Loading...</div>
-                                    <div id="codex-limits-container" style="flex: 1;">
+                                    <div id="codex-limits-container" style="flex: 1; overflow-y: auto; padding-right: 4px;">
                                         <p style="color:#666; font-size: 12px;">Loading usage data...</p>
                                     </div>
                                 </div>
@@ -10191,31 +10507,10 @@ ${'='.repeat(80)}
                                         <button class="secondary" onclick="openApiKeyModal('gemini')" style="background: white; border: 1px solid #d1d5da; color: #24292f; padding: 10px 16px; font-weight: 500; border-radius: 6px; width: 220px;">Use API Key</button>
                                     </div>
                                 </div>
-                                <div id="gemini-usage-view-content" style="display:none; flex: 1; padding: 12px;">
-                                    <div style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
-                                        <!-- Connected Status -->
-                                        <div style="display: flex; align-items: center; justify-content: space-between;">
-                                            <div style="display: flex; align-items: center; gap: 8px;">
-                                                <span style="width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block;"></span>
-                                                <span style="font-size: 13px; color: #22c55e; font-weight: 500;">Connected</span>
-                                            </div>
-                                            <span id="gemini-account-email" style="font-size: 12px; color: #57606a;"></span>
-                                        </div>
-                                        <!-- Info Box -->
-                                        <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 8px; padding: 14px; flex: 1; display: flex; flex-direction: column; justify-content: center;">
-                                            <div style="display: flex; align-items: flex-start; gap: 10px;">
-                                                <span style="font-size: 24px;">✨</span>
-                                                <div>
-                                                    <div style="font-weight: 600; color: #92400e; margin-bottom: 4px;">Gemini CLI Ready</div>
-                                                    <div style="font-size: 13px; color: #a16207; line-height: 1.4;">Usage metrics aren't exposed by Google's API yet. View your usage in the Google Cloud Console.</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- Quick Action -->
-                                        <a href="https://aistudio.google.com/app/apikey" target="_blank" style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; background: #f3f4f6; border-radius: 6px; color: #374151; font-size: 13px; font-weight: 500; text-decoration: none; transition: background 0.15s;">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                            Open Google AI Studio
-                                        </a>
+                                <div id="gemini-usage-view-content" style="display: none; flex: 1; flex-direction: column;">
+                                    <div class="codex-card-subtitle" id="gemini-last-refresh" style="margin-bottom:12px; flex-shrink: 0;">Loading...</div>
+                                    <div id="gemini-limits-container" style="flex: 1;">
+                                        <p style="color:#666; font-size: 12px;">Loading usage data...</p>
                                     </div>
                                 </div>
                             </div>
@@ -10284,11 +10579,23 @@ ${'='.repeat(80)}
                                     </tr>
                                 </thead>
                                 <tbody id="agent-sessions-body">
-                                    <tr><td colspan="6" style="text-align:center; padding:40px 20px; color:#666;">
+                                    <tr><td colspan="6" style="text-align:center; padding:40px 20px; color:#666; position: relative;">
+                                        <div class="fish-pond" id="fish-pond"></div>
                                         <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
-                                            <img src="/sakana_logo.jpeg" alt="Sakana AI" style="width:64px; height:64px; object-fit:contain;">
+                                            <div class="sakana-logo-container" id="sakana-logo" onclick="startFishSwim()" title="Click to release the fish!">
+                                                <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+                                                    <g id="sakana-fish-group" transform="translate(0,400) scale(0.1,-0.1)" stroke="none">
+                                                        <path class="fish black-fish" fill="#000000" d="M516 3373 c-17 -5 -18 -14 -14 -121 5 -132 31 -223 89 -315 44 -69 247 -277 271 -277 36 0 17 36 -57 110 -41 41 -75 77 -75 81 0 9 91 56 131 67 l36 10 6 -50 c14 -114 120 -265 143 -204 3 8 -8 32 -25 54 -60 73 -93 202 -53 202 41 0 124 -33 167 -65 47 -37 69 -43 81 -23 9 15 -54 70 -110 98 -23 11 -66 24 -96 30 -29 6 -55 12 -58 14 -8 8 28 103 52 134 l22 31 79 -79 c44 -44 85 -80 91 -80 7 0 15 8 19 18 5 13 -23 45 -117 137 -132 129 -211 180 -321 209 -60 16 -230 28 -261 19z m280 -76 c61 -23 115 -52 156 -84 l36 -29 -29 -44 c-26 -39 -59 -125 -59 -156 0 -6 -18 -14 -41 -18 -37 -6 -108 -38 -152 -69 -15 -10 -21 -8 -42 18 -71 88 -115 216 -115 340 l0 70 102 -6 c57 -4 121 -13 144 -22z"/>
+                                                        <path class="fish black-fish" fill="#000000" d="M1623 3234 c-12 -32 5 -228 25 -284 41 -116 73 -162 200 -293 69 -70 131 -126 136 -124 31 10 14 44 -59 117 l-77 77 35 22 c32 19 110 51 127 51 4 0 10 -22 13 -49 7 -60 46 -144 86 -188 57 -63 80 -27 28 44 -37 50 -67 127 -67 168 0 21 5 25 30 25 43 0 123 -33 169 -69 21 -17 43 -31 49 -31 24 0 18 30 -11 58 -44 41 -103 70 -173 84 -32 7 -60 13 -62 14 -8 5 19 79 43 121 l27 45 78 -77 c73 -73 107 -90 117 -59 2 5 -54 67 -124 135 -143 140 -219 187 -348 214 -98 21 -234 20 -242 -1z m288 -62 c69 -24 102 -42 156 -81 l42 -30 -34 -56 c-18 -31 -39 -78 -46 -105 -12 -47 -14 -49 -60 -60 -27 -7 -73 -27 -103 -45 l-56 -33 -29 35 c-68 82 -111 212 -111 332 l0 74 93 -6 c51 -3 117 -14 148 -25z"/>
+                                                        <path class="fish red-fish" fill="#db0d0f" d="M3165 2879 c-69 -15 -126 -40 -235 -102 -138 -78 -160 -95 -153 -112 8 -23 26 -18 118 35 48 28 90 50 95 50 13 0 32 -68 34 -122 l1 -49 -95 -2 c-79 -2 -103 -6 -145 -27 -85 -43 -64 -79 25 -41 62 27 200 31 200 6 0 -41 -59 -123 -121 -168 -41 -30 -49 -51 -25 -60 34 -13 136 86 175 170 l24 52 38 -21 c21 -12 53 -37 71 -55 l33 -34 -21 -17 c-12 -9 -56 -36 -98 -60 -73 -41 -93 -66 -62 -78 8 -3 72 27 143 68 164 93 262 186 316 298 40 83 74 198 64 222 -15 40 -273 71 -382 47z m270 -55 c73 -18 72 -13 34 -122 -33 -99 -113 -208 -192 -264 l-28 -20 -36 42 c-20 23 -60 55 -89 72 l-54 30 0 66 c-1 37 -7 85 -15 107 -8 22 -15 43 -15 46 0 7 97 44 135 52 50 11 201 6 260 -9z"/>
+                                                        <path class="fish black-fish" fill="#000000" d="M753 2354 c-21 -9 -16 -177 7 -269 30 -118 77 -192 208 -327 63 -65 121 -118 129 -118 7 0 16 7 20 16 4 11 -19 41 -73 95 -65 65 -76 81 -64 90 34 22 87 47 123 57 l37 10 0 -33 c0 -101 122 -285 146 -221 4 9 -5 29 -20 47 -41 48 -66 105 -73 160 -5 44 -4 49 14 49 42 0 124 -32 168 -65 53 -41 78 -45 73 -13 -5 35 -101 95 -183 115 -38 9 -71 17 -73 19 -8 5 19 78 43 121 l27 45 84 -83 c80 -80 85 -83 101 -66 17 17 12 23 -107 140 -135 132 -213 182 -326 212 -62 16 -240 29 -261 19z m257 -70 c66 -19 133 -52 181 -91 l36 -29 -24 -34 c-27 -40 -63 -131 -63 -160 0 -15 -7 -20 -25 -20 -32 0 -99 -27 -148 -59 l-38 -25 -24 30 c-72 88 -115 215 -115 339 l0 78 83 -7 c45 -4 107 -14 137 -22z"/>
+                                                        <path class="fish black-fish" fill="#000000" d="M1867 2123 c-13 -12 -7 -187 8 -250 29 -125 69 -187 209 -331 72 -73 135 -131 140 -129 31 10 14 44 -59 117 l-77 78 45 26 c39 23 98 46 118 46 3 0 9 -23 12 -52 11 -93 93 -227 130 -213 24 10 22 18 -18 74 -39 54 -65 119 -65 162 0 25 4 29 29 29 43 0 108 -26 162 -65 54 -39 64 -42 72 -21 14 36 -123 120 -215 132 -57 8 -59 16 -22 94 42 91 38 90 124 5 74 -73 107 -90 117 -59 2 6 -54 67 -125 136 -143 140 -219 186 -347 213 -71 15 -226 20 -238 8z m246 -62 c86 -23 122 -39 189 -88 l47 -34 -28 -42 c-28 -41 -61 -124 -61 -151 0 -8 -20 -19 -50 -26 -27 -6 -75 -27 -106 -46 -64 -39 -56 -42 -114 47 -48 73 -71 153 -77 262 l-6 97 65 0 c36 0 99 -9 141 -19z"/>
+                                                        <path class="fish black-fish" fill="#000000" d="M1011 1236 c-11 -13 -13 -38 -8 -114 14 -203 55 -289 226 -464 68 -71 130 -128 138 -128 7 0 16 7 20 16 4 11 -19 41 -76 98 -80 80 -81 81 -58 96 34 22 89 47 118 54 25 6 27 3 33 -42 13 -90 104 -237 135 -218 19 12 12 34 -24 81 -32 43 -65 126 -65 167 0 40 129 7 202 -53 39 -31 68 -33 68 -4 0 37 -172 125 -245 125 -23 0 -25 3 -19 28 4 15 20 53 37 85 l30 58 82 -81 c58 -56 88 -78 99 -74 9 3 16 11 16 18 0 21 -234 245 -295 281 -86 51 -173 75 -295 82 -91 5 -107 3 -119 -11z m224 -51 c79 -17 173 -60 224 -103 l34 -28 -30 -42 c-17 -22 -38 -68 -47 -101 l-17 -60 -60 -17 c-33 -9 -79 -30 -101 -47 l-42 -30 -28 34 c-68 80 -117 229 -118 352 l0 57 58 0 c31 0 89 -7 127 -15z"/>
+                                                    </g>
+                                                </svg>
+                                            </div>
                                             <span style="font-weight: 500; color: #24292f;">No evolution runs found.</span>
-                                            <span style="font-size: 13px; color: #57606a;">Sign in to an LLM provider to start an agent.</span>
+                                            <span id="empty-state-subtitle" style="font-size: 13px; color: #57606a;">Sign in to an LLM provider to start an agent.</span>
                                         </div>
                                     </td></tr>
                                 </tbody>
@@ -10651,38 +10958,53 @@ ${'='.repeat(80)}
             showToast('Gemini status refreshed', 'info');
         }
 
-        function signOutCodex() {
+        async function signOutCodex() {
             // Hide usage view, show auth view
             document.getElementById('codex-usage-view-content').style.display = 'none';
             document.getElementById('codex-auth-view').style.display = 'flex';
             document.getElementById('codex-menu-container').style.display = 'none';
             document.getElementById('codex-plan-badge').style.display = 'none';
-            // Clear stored API key and mark as signed out
-            localStorage.removeItem('shinka_api_key_codex');
+            // Clear stored API key from backend and mark as signed out
+            try {
+                await syncCredentialToBackend('openai', '', 'delete');
+            } catch (err) {
+                console.warn('Failed to clear credential on signout:', err);
+            }
+            delete credentialStatusCache['openai'];
             localStorage.setItem('shinka_signed_out_codex', 'true');
             showToast('Signed out of Codex CLI', 'info');
         }
 
-        function signOutGemini() {
+        async function signOutGemini() {
             // Hide usage view, show auth view
             document.getElementById('gemini-usage-view-content').style.display = 'none';
             document.getElementById('gemini-auth-view').style.display = 'flex';
             document.getElementById('gemini-menu-container').style.display = 'none';
             document.getElementById('gemini-plan-badge').style.display = 'none';
-            // Clear stored API key and mark as signed out
-            localStorage.removeItem('shinka_api_key_gemini');
+            // Clear stored API key from backend and mark as signed out
+            try {
+                await syncCredentialToBackend('google', '', 'delete');
+            } catch (err) {
+                console.warn('Failed to clear credential on signout:', err);
+            }
+            delete credentialStatusCache['google'];
             localStorage.setItem('shinka_signed_out_gemini', 'true');
             showToast('Signed out of Gemini CLI', 'info');
         }
 
-        function signOutClaude() {
+        async function signOutClaude() {
             // Hide usage view, show auth view
             document.getElementById('claude-usage-view-content').style.display = 'none';
             document.getElementById('claude-auth-view').style.display = 'flex';
             document.getElementById('claude-menu-container').style.display = 'none';
             document.getElementById('claude-plan-badge').style.display = 'none';
-            // Clear stored API key and mark as signed out
-            localStorage.removeItem('shinka_api_key_claude');
+            // Clear stored API key from backend and mark as signed out
+            try {
+                await syncCredentialToBackend('anthropic', '', 'delete');
+            } catch (err) {
+                console.warn('Failed to clear credential on signout:', err);
+            }
+            delete credentialStatusCache['anthropic'];
             localStorage.setItem('shinka_signed_out_claude', 'true');
             showToast('Signed out of Claude Code', 'info');
         }
@@ -10699,16 +11021,74 @@ ${'='.repeat(80)}
 
         // Fetch Gemini CLI status and update card
         function fetchGeminiStatus() {
-            fetch('/api/gemini_status')
+            fetch('/api/gemini_usage')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.available && data.authenticated) {
-                        // Show Gemini as ready
+                    const plan = data.plan || "Unknown";
+                    // Only check authenticated status - errors should still show the user as logged in
+                    const isAuthenticated = data.authenticated;
+
+                    if (isAuthenticated) {
+                        // Show usage view
                         document.getElementById('gemini-auth-view').style.display = 'none';
-                        document.getElementById('gemini-usage-view-content').style.display = 'block';
-                        document.getElementById('gemini-plan-badge').textContent = 'CLI Ready';
+                        document.getElementById('gemini-usage-view-content').style.display = 'flex';
+                        document.getElementById('gemini-plan-badge').textContent = plan;
                         document.getElementById('gemini-plan-badge').style.display = 'inline-block';
                         document.getElementById('gemini-menu-container').style.display = 'block';
+
+                        // Populate last refresh time
+                        const refreshTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const refreshEl = document.getElementById("gemini-last-refresh");
+                        if (refreshEl) refreshEl.textContent = `Last refreshed ${refreshTime}`;
+
+                        // Populate usage limits with progress bars
+                        const limitsContainer = document.getElementById("gemini-limits-container");
+                        if (limitsContainer) {
+                            if (data.error) {
+                                limitsContainer.innerHTML = `<div style="color:#cf222e; font-size:12px;">Error loading usage: ${data.error}</div>`;
+                            } else if (data.windows && data.windows.length > 0) {
+                                // Only show pro models (gemini-2.5-pro and gemini-3-pro-preview)
+                                const proModels = ['gemini-2.5-pro', 'gemini-3-pro-preview'];
+                                const filteredWindows = data.windows.filter(win =>
+                                    proModels.some(model => win.label.includes(model))
+                                );
+
+                                let html = '';
+                                (filteredWindows.length > 0 ? filteredWindows : data.windows).forEach(win => {
+                                    const percent = Math.min(100, Math.max(0, win.percent_used));
+                                    // Cleaner label - just show model name
+                                    const modelMatch = win.label.match(/gemini-[\w.-]+/i);
+                                    const displayLabel = modelMatch ? modelMatch[0] : win.label;
+                                    html += `
+                                        <div class="usage-limit-row">
+                                            <div class="usage-limit-header">
+                                                <span>${displayLabel}</span>
+                                                ${win.reset_at_local ? `<span class="usage-limit-reset">Resets ${win.reset_at_local}</span>` : ''}
+                                            </div>
+                                            <div class="progress-bar-bg">
+                                                <!-- Google brand gradient: blue, red, yellow, green -->
+                                                <div class="progress-bar-fill" style="width: ${percent}%; background: linear-gradient(90deg, #4285F4 0%, #EA4335 35%, #FBBC05 65%, #34A853 100%);"></div>
+                                            </div>
+                                            <div class="progress-text">${win.percent_used.toFixed(1)}% used</div>
+                                        </div>
+                                    `;
+                                });
+                                limitsContainer.innerHTML = html;
+                            } else {
+                                // No windows data - show friendly message
+                                limitsContainer.innerHTML = `
+                                    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-radius: 8px; padding: 14px;">
+                                        <div style="display: flex; align-items: flex-start; gap: 10px;">
+                                            <span style="font-size: 20px;">✨</span>
+                                            <div>
+                                                <div style="font-weight: 600; color: #1e40af; margin-bottom: 4px;">Gemini CLI Ready</div>
+                                                <div style="font-size: 12px; color: #1d4ed8; line-height: 1.4;">Quota data may not be available for all tiers.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        }
                     } else {
                         // Keep auth view visible
                         document.getElementById('gemini-auth-view').style.display = 'flex';
@@ -10718,7 +11098,7 @@ ${'='.repeat(80)}
                     }
                 })
                 .catch(err => {
-                    console.error('Failed to fetch Gemini status:', err);
+                    console.error('Failed to fetch Gemini usage:', err);
                 });
         }
 
@@ -10749,11 +11129,12 @@ ${'='.repeat(80)}
                         }
                     }
 
-                    // Update Codex Card based on Plan
+                    // Update Codex Card based on authentication status
                     const plan = data.plan || "Unknown";
-                    const hasCodexPlan = plan !== "Unknown" && !data.error && !plan.toLowerCase().includes("gemini");
+                    // Use authenticated flag - errors should still show user as logged in
+                    const isAuthenticated = data.authenticated && plan !== "Unknown";
 
-                    if (hasCodexPlan) {
+                    if (isAuthenticated) {
                         document.getElementById("codex-auth-view").style.display = "none";
                         document.getElementById("codex-usage-view-content").style.display = "flex";
                         document.getElementById("codex-plan-badge").textContent = plan;
@@ -10780,7 +11161,8 @@ ${'='.repeat(80)}
                                                 ${win.reset_at_local ? `<span class="usage-limit-reset">Resets ${win.reset_at_local}</span>` : ''}
                                             </div>
                                             <div class="progress-bar-bg">
-                                                <div class="progress-bar-fill" style="width: ${percent}%"></div>
+                                                <!-- ChatGPT brand green #00A67E -->
+                                                <div class="progress-bar-fill" style="width: ${percent}%; background: linear-gradient(90deg, #00A67E 0%, #008F6B 100%);"></div>
                                             </div>
                                             <div class="progress-text">${win.percent_used.toFixed(1)}% used</div>
                                         </div>
@@ -10824,11 +11206,35 @@ ${'='.repeat(80)}
                     
                     const runs = data.runs || [];
                     if (runs.length === 0) {
-                        sessionsBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px 20px; color:#666;">
+                        // Check if empty state already exists (fish animation may be running)
+                        const existingLogo = document.getElementById('sakana-logo');
+                        const existingPond = document.getElementById('fish-pond');
+                        if (existingLogo && existingPond) {
+                            // Empty state already displayed, just update the subtitle text
+                            // without destroying the DOM (fish animation may be in progress)
+                            const subtitle = document.getElementById('empty-state-subtitle');
+                            if (subtitle) {
+                                subtitle.textContent = 'Start an evolution run to see it here.';
+                            }
+                            return;
+                        }
+                        sessionsBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px 20px; color:#666; position: relative;">
+                            <div class="fish-pond" id="fish-pond"></div>
                             <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
-                                <img src="/sakana_logo.jpeg" alt="Sakana AI" style="width:64px; height:64px; object-fit:contain;">
+                                <div class="sakana-logo-container" id="sakana-logo" onclick="startFishSwim()" title="Click to release the fish!">
+                                    <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+                                        <g id="sakana-fish-group" transform="translate(0,400) scale(0.1,-0.1)" stroke="none">
+                                            <path class="fish black-fish" fill="#000000" d="M516 3373 c-17 -5 -18 -14 -14 -121 5 -132 31 -223 89 -315 44 -69 247 -277 271 -277 36 0 17 36 -57 110 -41 41 -75 77 -75 81 0 9 91 56 131 67 l36 10 6 -50 c14 -114 120 -265 143 -204 3 8 -8 32 -25 54 -60 73 -93 202 -53 202 41 0 124 -33 167 -65 47 -37 69 -43 81 -23 9 15 -54 70 -110 98 -23 11 -66 24 -96 30 -29 6 -55 12 -58 14 -8 8 28 103 52 134 l22 31 79 -79 c44 -44 85 -80 91 -80 7 0 15 8 19 18 5 13 -23 45 -117 137 -132 129 -211 180 -321 209 -60 16 -230 28 -261 19z m280 -76 c61 -23 115 -52 156 -84 l36 -29 -29 -44 c-26 -39 -59 -125 -59 -156 0 -6 -18 -14 -41 -18 -37 -6 -108 -38 -152 -69 -15 -10 -21 -8 -42 18 -71 88 -115 216 -115 340 l0 70 102 -6 c57 -4 121 -13 144 -22z"/>
+                                            <path class="fish black-fish" fill="#000000" d="M1623 3234 c-12 -32 5 -228 25 -284 41 -116 73 -162 200 -293 69 -70 131 -126 136 -124 31 10 14 44 -59 117 l-77 77 35 22 c32 19 110 51 127 51 4 0 10 -22 13 -49 7 -60 46 -144 86 -188 57 -63 80 -27 28 44 -37 50 -67 127 -67 168 0 21 5 25 30 25 43 0 123 -33 169 -69 21 -17 43 -31 49 -31 24 0 18 30 -11 58 -44 41 -103 70 -173 84 -32 7 -60 13 -62 14 -8 5 19 79 43 121 l27 45 78 -77 c73 -73 107 -90 117 -59 2 5 -54 67 -124 135 -143 140 -219 187 -348 214 -98 21 -234 20 -242 -1z m288 -62 c69 -24 102 -42 156 -81 l42 -30 -34 -56 c-18 -31 -39 -78 -46 -105 -12 -47 -14 -49 -60 -60 -27 -7 -73 -27 -103 -45 l-56 -33 -29 35 c-68 82 -111 212 -111 332 l0 74 93 -6 c51 -3 117 -14 148 -25z"/>
+                                            <path class="fish red-fish" fill="#db0d0f" d="M3165 2879 c-69 -15 -126 -40 -235 -102 -138 -78 -160 -95 -153 -112 8 -23 26 -18 118 35 48 28 90 50 95 50 13 0 32 -68 34 -122 l1 -49 -95 -2 c-79 -2 -103 -6 -145 -27 -85 -43 -64 -79 25 -41 62 27 200 31 200 6 0 -41 -59 -123 -121 -168 -41 -30 -49 -51 -25 -60 34 -13 136 86 175 170 l24 52 38 -21 c21 -12 53 -37 71 -55 l33 -34 -21 -17 c-12 -9 -56 -36 -98 -60 -73 -41 -93 -66 -62 -78 8 -3 72 27 143 68 164 93 262 186 316 298 40 83 74 198 64 222 -15 40 -273 71 -382 47z m270 -55 c73 -18 72 -13 34 -122 -33 -99 -113 -208 -192 -264 l-28 -20 -36 42 c-20 23 -60 55 -89 72 l-54 30 0 66 c-1 37 -7 85 -15 107 -8 22 -15 43 -15 46 0 7 97 44 135 52 50 11 201 6 260 -9z"/>
+                                            <path class="fish black-fish" fill="#000000" d="M753 2354 c-21 -9 -16 -177 7 -269 30 -118 77 -192 208 -327 63 -65 121 -118 129 -118 7 0 16 7 20 16 4 11 -19 41 -73 95 -65 65 -76 81 -64 90 34 22 87 47 123 57 l37 10 0 -33 c0 -101 122 -285 146 -221 4 9 -5 29 -20 47 -41 48 -66 105 -73 160 -5 44 -4 49 14 49 42 0 124 -32 168 -65 53 -41 78 -45 73 -13 -5 35 -101 95 -183 115 -38 9 -71 17 -73 19 -8 5 19 78 43 121 l27 45 84 -83 c80 -80 85 -83 101 -66 17 17 12 23 -107 140 -135 132 -213 182 -326 212 -62 16 -240 29 -261 19z m257 -70 c66 -19 133 -52 181 -91 l36 -29 -24 -34 c-27 -40 -63 -131 -63 -160 0 -15 -7 -20 -25 -20 -32 0 -99 -27 -148 -59 l-38 -25 -24 30 c-72 88 -115 215 -115 339 l0 78 83 -7 c45 -4 107 -14 137 -22z"/>
+                                            <path class="fish black-fish" fill="#000000" d="M1867 2123 c-13 -12 -7 -187 8 -250 29 -125 69 -187 209 -331 72 -73 135 -131 140 -129 31 10 14 44 -59 117 l-77 78 45 26 c39 23 98 46 118 46 3 0 9 -23 12 -52 11 -93 93 -227 130 -213 24 10 22 18 -18 74 -39 54 -65 119 -65 162 0 25 4 29 29 29 43 0 108 -26 162 -65 54 -39 64 -42 72 -21 14 36 -123 120 -215 132 -57 8 -59 16 -22 94 42 91 38 90 124 5 74 -73 107 -90 117 -59 2 6 -54 67 -125 136 -143 140 -219 186 -347 213 -71 15 -226 20 -238 8z m246 -62 c86 -23 122 -39 189 -88 l47 -34 -28 -42 c-28 -41 -61 -124 -61 -151 0 -8 -20 -19 -50 -26 -27 -6 -75 -27 -106 -46 -64 -39 -56 -42 -114 47 -48 73 -71 153 -77 262 l-6 97 65 0 c36 0 99 -9 141 -19z"/>
+                                            <path class="fish black-fish" fill="#000000" d="M1011 1236 c-11 -13 -13 -38 -8 -114 14 -203 55 -289 226 -464 68 -71 130 -128 138 -128 7 0 16 7 20 16 4 11 -19 41 -76 98 -80 80 -81 81 -58 96 34 22 89 47 118 54 25 6 27 3 33 -42 13 -90 104 -237 135 -218 19 12 12 34 -24 81 -32 43 -65 126 -65 167 0 40 129 7 202 -53 39 -31 68 -33 68 -4 0 37 -172 125 -245 125 -23 0 -25 3 -19 28 4 15 20 53 37 85 l30 58 82 -81 c58 -56 88 -78 99 -74 9 3 16 11 16 18 0 21 -234 245 -295 281 -86 51 -173 75 -295 82 -91 5 -107 3 -119 -11z m224 -51 c79 -17 173 -60 224 -103 l34 -28 -30 -42 c-17 -22 -38 -68 -47 -101 l-17 -60 -60 -17 c-33 -9 -79 -30 -101 -47 l-42 -30 -28 34 c-68 80 -117 229 -118 352 l0 57 58 0 c31 0 89 -7 127 -15z"/>
+                                        </g>
+                                    </svg>
+                                </div>
                                 <span style="font-weight: 500; color: #24292f;">No evolution runs found.</span>
-                                <span style="font-size: 13px; color: #57606a;">Start an evolution run to see it here.</span>
+                                <span id="empty-state-subtitle" style="font-size: 13px; color: #57606a;">Start an evolution run to see it here.</span>
                             </div>
                         </td></tr>`;
                     } else {
@@ -10893,6 +11299,722 @@ ${'='.repeat(80)}
                     console.error("Failed to fetch evolution runs:", err);
                 });
         }
+
+        // ========== Sakana Fish Easter Egg - Boids Swimming ==========
+        let fishSwimActive = false;
+        let fishAnimationFrame = null;
+        let swimmingFish = [];
+        let fishPhase = 'idle'; // 'idle', 'launching', 'swimming', 'returning'
+        let launchFrame = 0;
+        let fishPondBounds = { width: 0, height: 0 };
+        let logoCenter = { x: 0, y: 0 };
+        let logoInfo = { x: 0, y: 0, size: 0 }; // Store logo position for accurate return
+        let totalFishSpawned = 6; // Track total fish spawned for red fish logic
+        let spawnInterval = null; // For hold-to-spawn
+        let activePondId = 'fish-pond'; // Track which pond is currently active
+        let activeLogoId = 'sakana-logo'; // Track which logo is currently active
+
+        // Actual Sakana fish SVG - extracted directly from sakana_logo.svg
+        const fishSVG = `<svg viewBox="35 50 70 100" xmlns="http://www.w3.org/2000/svg">
+            <g transform="translate(0,400) scale(0.1,-0.1)" stroke="none">
+                <path fill="currentColor" d="M516 3373 c-17 -5 -18 -14 -14 -121 5 -132 31 -223 89 -315 44 -69 247 -277 271 -277 36 0 17 36 -57 110 -41 41 -75 77 -75 81 0 9 91 56 131 67 l36 10 6 -50 c14 -114 120 -265 143 -204 3 8 -8 32 -25 54 -60 73 -93 202 -53 202 41 0 124 -33 167 -65 47 -37 69 -43 81 -23 9 15 -54 70 -110 98 -23 11 -66 24 -96 30 -29 6 -55 12 -58 14 -8 8 28 103 52 134 l22 31 79 -79 c44 -44 85 -80 91 -80 7 0 15 8 19 18 5 13 -23 45 -117 137 -132 129 -211 180 -321 209 -60 16 -230 28 -261 19z m280 -76 c61 -23 115 -52 156 -84 l36 -29 -29 -44 c-26 -39 -59 -125 -59 -156 0 -6 -18 -14 -41 -18 -37 -6 -108 -38 -152 -69 -15 -10 -21 -8 -42 18 -71 88 -115 216 -115 340 l0 70 102 -6 c57 -4 121 -13 144 -22z"/>
+            </g>
+        </svg>`;
+
+        // Fish positions calculated from SVG path centers in the 400x400 viewBox
+        // Adjusted for the fish SVG viewBox offset (fish visual isn't centered in viewBox)
+        // Angles: displayAngle = currentAngle + 135. Black fish face upper-left (-135°), red faces right (0°)
+        const fishPositions = [
+            { rx: 0.14, ry: 0.18, angle: -135, isRed: false },  // top-left fish
+            { rx: 0.40, ry: 0.24, angle: -135, isRed: false },  // top-middle fish
+            { rx: 0.74, ry: 0.32, angle: -37, isRed: true },    // top-right RED fish
+            { rx: 0.20, ry: 0.46, angle: -135, isRed: false },  // middle-left fish
+            { rx: 0.46, ry: 0.52, angle: -135, isRed: false },  // middle fish
+            { rx: 0.27, ry: 0.76, angle: -135, isRed: false },  // bottom fish
+        ];
+
+        function startFishSwim(pondId = 'fish-pond', logoId = 'sakana-logo') {
+            if (fishSwimActive) {
+                // If already swimming, clicking stops it
+                stopFishSwim();
+                return;
+            }
+
+            const pond = document.getElementById(pondId);
+            const logo = document.getElementById(logoId);
+            if (!pond || !logo) return;
+
+            // Store which pond/logo we're using
+            activePondId = pondId;
+            activeLogoId = logoId;
+
+            // Use the pond's parent as the reference for coordinates
+            const container = pond.closest('td') || pond.closest('.empty-state-guidance') || pond.parentElement;
+            if (!container) return;
+
+            const containerRect = container.getBoundingClientRect();
+            const logoRect = logo.getBoundingClientRect();
+
+            // Calculate logo position relative to the container
+            const logoX = logoRect.left - containerRect.left;
+            const logoY = logoRect.top - containerRect.top;
+            const logoSize = logoRect.width;
+
+            // Store bounds for animation
+            fishPondBounds = { width: containerRect.width, height: containerRect.height };
+            logoCenter = { x: logoX + logoSize / 2, y: logoY + logoSize / 2 };
+            logoInfo = { x: logoX, y: logoY, size: logoSize };
+
+            // Create fish at their exact logo positions
+            // Fish size calculated from SVG: viewBox 70x100 in 400x400 space, displayed at logoSize
+            // Each fish is roughly 70/400 = 0.175 of the logo width, but accounting for viewBox framing
+            swimmingFish = [];
+            const fishSize = logoSize / 4.2;  // Smaller to match actual logo fish size
+
+            fishPositions.forEach((pos, i) => {
+                const fish = document.createElement('div');
+                fish.className = `swimming-fish ${pos.isRed ? 'red-fish' : 'black-fish'}`;
+                fish.innerHTML = fishSVG;
+                fish.style.width = fishSize + 'px';
+                fish.style.height = fishSize + 'px';
+                fish.style.opacity = '0'; // Start invisible
+                pond.appendChild(fish);
+
+                const homeX = logoX + pos.rx * logoSize;
+                const homeY = logoY + pos.ry * logoSize;
+
+                swimmingFish.push({
+                    el: fish,
+                    x: homeX,
+                    y: homeY,
+                    homeX: homeX,
+                    homeY: homeY,
+                    vx: 0,
+                    vy: 0,
+                    targetVx: 0,
+                    targetVy: 0,
+                    isRed: pos.isRed,
+                    size: fishSize,
+                    homeAngle: pos.angle,
+                    currentAngle: pos.angle
+                });
+
+                // Position at home immediately
+                const halfSize = fishSize / 2;
+                fish.style.transform = `translate(${homeX - halfSize}px, ${homeY - halfSize}px) rotate(${pos.angle + 135}deg)`;
+            });
+
+            // Start launch sequence
+            fishPhase = 'launching';
+            launchFrame = 0;
+            fishSwimActive = true;
+
+            // Crossfade: fade out logo while fading in fish
+            logo.style.transition = 'opacity 0.4s ease-out';
+            logo.style.opacity = '0';
+            logo.style.pointerEvents = 'none';
+
+            // Setup hover detection for return behavior
+            setupReturnHover(logoX, logoY, logoSize);
+
+            animateFish();
+        }
+
+        function setupReturnHover(logoX, logoY, logoSize) {
+            const pond = document.getElementById(activePondId);
+            if (!pond) return;
+
+            // Calculate the actual center of fish positions (not geometric center of logo)
+            // Fish positions: rx ranges 0.14-0.74, ry ranges 0.18-0.76
+            // But fish SVG visual is offset within the element, so adjust empirically
+            const fishCenterRx = 0.42;
+            const fishCenterRy = 0.38;
+            const fishCenterX = logoX + fishCenterRx * logoSize;
+            const fishCenterY = logoY + fishCenterRy * logoSize;
+
+            // Create hover zone centered on fish cluster - with visual feedback
+            let hoverZone = document.getElementById('fish-hover-zone');
+            if (!hoverZone) {
+                hoverZone = document.createElement('div');
+                hoverZone.id = 'fish-hover-zone';
+                pond.appendChild(hoverZone);
+            }
+
+            // Position and style the hover zone - centered on fish cluster
+            const hoverRadius = logoSize * 0.52; // Radius to cover all fish
+            hoverZone.style.cssText = `
+                position: absolute;
+                left: ${fishCenterX - hoverRadius}px;
+                top: ${fishCenterY - hoverRadius}px;
+                width: ${hoverRadius * 2}px;
+                height: ${hoverRadius * 2}px;
+                border-radius: 50%;
+                pointer-events: auto;
+                cursor: pointer;
+                z-index: 5;
+                transition: background-color 0.2s ease;
+                background-color: transparent;
+            `;
+
+            hoverZone.onmouseenter = () => {
+                if (fishSwimActive && fishPhase === 'swimming') {
+                    fishPhase = 'returning';
+                    // Show visual feedback - grey circle
+                    hoverZone.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
+                }
+            };
+
+            hoverZone.onmouseleave = () => {
+                if (fishSwimActive && fishPhase === 'returning') {
+                    fishPhase = 'swimming';
+                    // Hide visual feedback
+                    hoverZone.style.backgroundColor = 'transparent';
+                }
+                // Stop spawning when mouse leaves
+                if (spawnInterval) {
+                    clearInterval(spawnInterval);
+                    spawnInterval = null;
+                }
+            };
+
+            // Hold-to-spawn: track mouse down time
+            let mouseDownTime = 0;
+            let isHolding = false;
+
+            hoverZone.onmousedown = (e) => {
+                mouseDownTime = Date.now();
+                isHolding = true;
+                
+                // Start spawning after a short delay (to distinguish from click)
+                setTimeout(() => {
+                    if (isHolding && fishSwimActive) {
+                        // Start continuous spawning
+                        spawnInterval = setInterval(() => {
+                            if (isHolding && fishSwimActive) {
+                                spawnExtraFish();
+                            }
+                        }, 200); // Spawn every 200ms
+                    }
+                }, 300); // Wait 300ms before starting to spawn
+            };
+
+            hoverZone.onmouseup = () => {
+                const holdDuration = Date.now() - mouseDownTime;
+                isHolding = false;
+                
+                // Stop spawning
+                if (spawnInterval) {
+                    clearInterval(spawnInterval);
+                    spawnInterval = null;
+                }
+                
+                // If it was a quick click (not a hold), stop the animation
+                if (holdDuration < 300 && fishSwimActive) {
+                    stopFishSwim();
+                }
+            };
+
+            // Remove the old onclick since we handle it in mouseup now
+            hoverZone.onclick = null;
+        }
+
+        function spawnExtraFish() {
+            const pond = document.getElementById('fish-pond');
+            if (!pond || !fishSwimActive) return;
+
+            totalFishSpawned++;
+            const isRed = totalFishSpawned % 10 === 0; // Every 10th fish is red
+            
+            const fishSize = logoInfo.size / 4.2;
+            const fish = document.createElement('div');
+            fish.className = `swimming-fish ${isRed ? 'red-fish' : 'black-fish'}`;
+            fish.innerHTML = fishSVG;
+            fish.style.width = fishSize + 'px';
+            fish.style.height = fishSize + 'px';
+            fish.style.opacity = '1';
+            fish.style.visibility = 'visible';
+            fish.style.display = 'block';
+            pond.appendChild(fish);
+            
+            // Force reflow to ensure fish is rendered before animation
+            fish.offsetHeight;
+
+            // Spawn from center of logo area with random velocity outward
+            const spawnX = logoCenter.x + (Math.random() - 0.5) * 20;
+            const spawnY = logoCenter.y + (Math.random() - 0.5) * 20;
+            
+            // Random outward velocity
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1.5 + Math.random() * 1;
+            
+            const newFish = {
+                el: fish,
+                x: spawnX,
+                y: spawnY,
+                homeX: spawnX,
+                homeY: spawnY,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                targetVx: Math.cos(angle) * speed,
+                targetVy: Math.sin(angle) * speed,
+                isRed: isRed,
+                size: fishSize,
+                homeAngle: isRed ? -37 : -135,
+                currentAngle: angle * (180 / Math.PI),
+                isExtra: true // Mark as extra spawned fish
+            };
+            
+            swimmingFish.push(newFish);
+            
+            // Position immediately
+            const halfSize = fishSize / 2;
+            fish.style.transform = `translate(${spawnX - halfSize}px, ${spawnY - halfSize}px) rotate(${newFish.currentAngle + 135}deg)`;
+        }
+
+        function animateFish() {
+            if (!fishSwimActive) return;
+
+            const width = fishPondBounds.width;
+            const height = fishPondBounds.height;
+            const offscreenAllowance = 60;  // Allow fish to go further off-screen for scaling
+            const softZone = 80;            // Reduced - start gentle steering closer to edge
+            const hardZone = 0;             // Strong steering when past edge
+            const maxSpeed = 1.5;
+            const turnSpeed = 0.015;
+            const launchDuration = 60;
+
+            const redFish = swimmingFish.find(f => f.isRed);
+            const blackFish = swimmingFish.filter(f => !f.isRed);
+
+            // Handle different phases
+            if (fishPhase === 'launching') {
+                launchFrame++;
+                const progress = Math.min(launchFrame / launchDuration, 1);
+                const easeOut = 1 - Math.pow(1 - progress, 3); // cubic ease-out
+
+                swimmingFish.forEach(fish => {
+                    // Skip extra spawned fish - they manage their own opacity
+                    if (fish.isExtra) return;
+                    
+                    // Fade in fish
+                    fish.el.style.opacity = Math.min(progress * 2, 1);
+
+                    // Gradually accelerate outward from center
+                    const dx = fish.homeX - logoCenter.x;
+                    const dy = fish.homeY - logoCenter.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    // Slowly build velocity pointing outward
+                    fish.targetVx = (dx / dist) * easeOut * 2;
+                    fish.targetVy = (dy / dist) * easeOut * 2;
+                });
+
+                if (launchFrame >= launchDuration) {
+                    fishPhase = 'swimming';
+                }
+            }
+            else if (fishPhase === 'returning') {
+                // Fish swim back to their home positions gracefully
+                let allSettled = true;
+                let totalDist = 0;
+
+                swimmingFish.forEach((fish, i) => {
+                    // Extra spawned fish don't have home positions - fade them out
+                    if (fish.isExtra || i >= fishPositions.length) {
+                        // Mark as returning so we know to fade
+                        if (!fish.isReturning) {
+                            fish.isReturning = true;
+                        }
+                        // Only fade once marked as returning
+                        const currentOpacity = parseFloat(fish.el.style.opacity) || 1;
+                        fish.el.style.opacity = Math.max(0, currentOpacity - 0.02);
+                        // Swim towards center and slow down
+                        fish.targetVx = (logoCenter.x - fish.x) * 0.015;
+                        fish.targetVy = (logoCenter.y - fish.y) * 0.015;
+                        // Remove when fully faded out
+                        if (currentOpacity <= 0.05) {
+                            fish.el.remove();
+                        }
+                        return;
+                    }
+
+                    const pos = fishPositions[i];
+                    const exactHomeX = logoInfo.x + pos.rx * logoInfo.size;
+                    const exactHomeY = logoInfo.y + pos.ry * logoInfo.size;
+
+                    const dx = exactHomeX - fish.x;
+                    const dy = exactHomeY - fish.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    totalDist += dist;
+
+                    if (dist > 5) {
+                        allSettled = false;
+                        // Swim towards home - speed based on distance
+                        const approachSpeed = Math.min(dist * 0.03, 1.5);
+                        const normDist = dist || 1;
+                        fish.targetVx = (dx / normDist) * approachSpeed;
+                        fish.targetVy = (dy / normDist) * approachSpeed;
+
+                        // Gradually rotate towards home angle as we get closer
+                        const homeInfluence = Math.max(0, 1 - dist / 100);
+                        const travelAngle = Math.atan2(fish.vy, fish.vx) * (180 / Math.PI);
+                        const targetAngle = pos.angle * homeInfluence + travelAngle * (1 - homeInfluence);
+
+                        let angleDiff = targetAngle - fish.currentAngle;
+                        while (angleDiff > 180) angleDiff -= 360;
+                        while (angleDiff < -180) angleDiff += 360;
+                        fish.currentAngle += angleDiff * 0.03;
+                    } else {
+                        // Very close to home - slow down and settle
+                        fish.targetVx *= 0.85;
+                        fish.targetVy *= 0.85;
+
+                        // Smoothly move to exact position
+                        fish.x += (exactHomeX - fish.x) * 0.15;
+                        fish.y += (exactHomeY - fish.y) * 0.15;
+
+                        // Smoothly rotate to home angle
+                        let angleDiff = pos.angle - fish.currentAngle;
+                        while (angleDiff > 180) angleDiff -= 360;
+                        while (angleDiff < -180) angleDiff += 360;
+                        fish.currentAngle += angleDiff * 0.1;
+
+                        // Check if fully settled
+                        const posSettled = Math.abs(dx) < 1 && Math.abs(dy) < 1;
+                        const angleSettled = Math.abs(angleDiff) < 3;
+                        if (!posSettled || !angleSettled) {
+                            allSettled = false;
+                        }
+                    }
+                });
+
+                // Remove faded-out extra fish from array
+                swimmingFish = swimmingFish.filter(fish => {
+                    if (fish.isExtra && parseFloat(fish.el.style.opacity) <= 0.05) {
+                        return false;
+                    }
+                    return true;
+                });
+
+                // When all fish are settled at home, they stay visible in position
+                // No logo crossfade - fish remain as the visual
+            }
+            else if (fishPhase === 'swimming') {
+                // Normal boids behavior - smoother, prefer horizontal movement
+                swimmingFish.forEach(fish => {
+                    if (fish.isRed) {
+                        // Red fish: independent explorer - frequent random direction changes
+                        // TODO: Make red fish faster - it should move noticeably quicker than black fish
+                        //       Currently moves at same speed. Consider higher maxSpeed or velocity multiplier.
+                        if (Math.random() < 0.02) {
+                            // Bigger, more frequent random changes
+                            fish.targetVx += (Math.random() - 0.5) * 1.2;
+                            fish.targetVy += (Math.random() - 0.5) * 0.8;
+                        }
+                        // Occasionally make sharp turns
+                        if (Math.random() < 0.005) {
+                            fish.targetVx = (Math.random() - 0.5) * 3;
+                            fish.targetVy = (Math.random() - 0.5) * 2;
+                        }
+                    } else {
+                        // Black fish: Direction-based sub-schools (5-10 fish each)
+                        // KEY: Only school with fish going SAME direction to prevent hurricane effect
+                        
+                        // TODO: BUNDLING/HURRICANE PROBLEM
+                        //       Fish in a school still pull in different directions causing them to
+                        //       ball together and spin like a hurricane without moving anywhere.
+                        //       The direction filter (dotProduct > 0.3) isn't sufficient - fish that
+                        //       pass the filter can still have ~60° difference which averages to chaos.
+                        //       Possible fixes:
+                        //       - Stricter direction filter (dotProduct > 0.7 = ~45°)
+                        //       - School should have ONE leader that others follow
+                        //       - Once in a school, fish should LOCK to school direction not average
+                        
+                        // TODO: LACK OF TIGHT FORMATION
+                        //       Sakana.ai homepage has fish in tight arrow/wedge formations.
+                        //       Current schools are loose clouds with no structure.
+                        //       Possible fixes:
+                        //       - Add positional slots (fish try to be at specific offset from leader)
+                        //       - Stronger drafting - fish actively seek position BEHIND others
+                        //       - Reduce separation distance further so fish are closer
+                        //       - Add "formation memory" - fish remember their slot in school
+                        
+                        const overlapDist = 25; // Separation distance
+                        const schoolRadius = 100; // Smaller radius = multiple schools
+                        const maxSchoolSize = 7; // Hard cap for sub-school size
+                        
+                        // Get this fish's direction (or assign one if stationary)
+                        let mySpeed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
+                        let myDirX = fish.vx;
+                        let myDirY = fish.vy;
+                        
+                        // If fish is nearly stationary, give it a random direction
+                        if (mySpeed < 0.2) {
+                            if (!fish.preferredDir) {
+                                const angle = Math.random() * Math.PI * 2;
+                                fish.preferredDir = { x: Math.cos(angle), y: Math.sin(angle) };
+                            }
+                            myDirX = fish.preferredDir.x;
+                            myDirY = fish.preferredDir.y;
+                            mySpeed = 1;
+                            // Push fish in its preferred direction
+                            fish.targetVx += fish.preferredDir.x * 0.08;
+                            fish.targetVy += fish.preferredDir.y * 0.05;
+                        } else {
+                            // Clear preferred dir once moving
+                            fish.preferredDir = null;
+                            myDirX /= mySpeed;
+                            myDirY /= mySpeed;
+                        }
+                        
+                        // Find neighbors going SIMILAR direction
+                        const compatibleNeighbors = [];
+                        let sepX = 0, sepY = 0;
+                        
+                        blackFish.forEach(other => {
+                            if (other === fish) return;
+                            const dx = other.x - fish.x;
+                            const dy = other.y - fish.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            
+                            // Separation for ALL nearby fish (regardless of direction)
+                            if (dist < overlapDist && dist > 0) {
+                                const force = ((overlapDist - dist) / overlapDist) * 0.3;
+                                sepX -= (dx / dist) * force;
+                                sepY -= (dy / dist) * force;
+                            }
+                            
+                            if (dist >= schoolRadius) return;
+                            
+                            // Check direction compatibility (dot product)
+                            const otherSpeed = Math.sqrt(other.vx * other.vx + other.vy * other.vy);
+                            if (otherSpeed < 0.15) return; // Skip stationary fish
+                            
+                            const otherDirX = other.vx / otherSpeed;
+                            const otherDirY = other.vy / otherSpeed;
+                            const dotProduct = myDirX * otherDirX + myDirY * otherDirY;
+                            
+                            // Only school with fish going roughly same direction (> ~60° agreement)
+                            if (dotProduct > 0.3) {
+                                compatibleNeighbors.push({ other, dx, dy, dist, dot: dotProduct });
+                            }
+                        });
+                        
+                        // Sort by distance, take closest compatible neighbors
+                        compatibleNeighbors.sort((a, b) => a.dist - b.dist);
+                        const schoolmates = compatibleNeighbors.slice(0, maxSchoolSize);
+                        
+                        if (schoolmates.length >= 2) {
+                            // We have a school! Follow it
+                            let avgVx = 0, avgVy = 0;
+                            let leaderX = 0, leaderY = 0;
+                            
+                            schoolmates.forEach(({ other, dist }) => {
+                                avgVx += other.vx;
+                                avgVy += other.vy;
+                                // Weight position by how ahead they are (drafting)
+                                const aheadness = (other.x - fish.x) * myDirX + (other.y - fish.y) * myDirY;
+                                if (aheadness > 0) {
+                                    leaderX += other.x;
+                                    leaderY += other.y;
+                                }
+                            });
+                            
+                            avgVx /= schoolmates.length;
+                            avgVy /= schoolmates.length;
+                            
+                            // ALIGNMENT - match school direction (PRIMARY) - stronger herding
+                            fish.targetVx += (avgVx - fish.vx) * 0.18;
+                            fish.targetVy += (avgVy - fish.vy) * 0.15;
+                            
+                            // DRAFTING - follow fish ahead of us (not center!) - stronger
+                            if (leaderX !== 0 || leaderY !== 0) {
+                                const leadCount = schoolmates.filter(s => 
+                                    (s.other.x - fish.x) * myDirX + (s.other.y - fish.y) * myDirY > 0
+                                ).length || 1;
+                                leaderX /= leadCount;
+                                leaderY /= leadCount;
+                                const toDx = leaderX - fish.x;
+                                const toDy = leaderY - fish.y;
+                                fish.targetVx += toDx * 0.012;
+                                fish.targetVy += toDy * 0.010;
+                            }
+                        } else {
+                            // Not enough compatible fish - try to find ANY nearby fish to follow
+                            // Black fish always want to school, never solo explore
+                            const anyNeighbor = blackFish.find(other => {
+                                if (other === fish) return false;
+                                const dx = other.x - fish.x;
+                                const dy = other.y - fish.y;
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+                                return dist < schoolRadius * 1.5;
+                            });
+                            
+                            if (anyNeighbor) {
+                                // Move toward nearest fish to join their school - stronger
+                                const dx = anyNeighbor.x - fish.x;
+                                const dy = anyNeighbor.y - fish.y;
+                                fish.targetVx += dx * 0.015;
+                                fish.targetVy += dy * 0.012;
+                                // Also try to match their direction - stronger
+                                fish.targetVx += (anyNeighbor.vx - fish.vx) * 0.12;
+                                fish.targetVy += (anyNeighbor.vy - fish.vy) * 0.10;
+                            }
+                            // If truly alone, just keep current momentum (no solo exploration)
+                        }
+                        
+                        // Apply separation (prevents overlap)
+                        fish.targetVx += sepX;
+                        fish.targetVy += sepY;
+                        
+                        // Very rarely follow red fish
+                        if (redFish && Math.random() < 0.001) {
+                            const dx = redFish.x - fish.x;
+                            const dy = redFish.y - fish.y;
+                            fish.targetVx += dx * 0.0005;
+                            fish.targetVy += dy * 0.0004;
+                        }
+                        
+                        // Tiny randomness
+                        if (Math.random() < 0.003) {
+                            fish.targetVx += (Math.random() - 0.5) * 0.04;
+                            fish.targetVy += (Math.random() - 0.5) * 0.02;
+                        }
+                    }
+
+                    // Dampen vertical velocity to prevent up/down oscillation
+                    fish.targetVy *= 0.98;
+
+                    // Horizontal bias: gently push fish to maintain horizontal movement
+                    if (Math.abs(fish.vx) < 0.3 && Math.abs(fish.vy) > 0.2) {
+                        // Fish is moving too vertically - add horizontal push
+                        fish.targetVx += (Math.random() > 0.5 ? 0.1 : -0.1);
+                    }
+
+                    // Wall avoidance - stronger base, but scales down with more fish
+                    const fishCount = swimmingFish.length;
+                    const wallForceMultiplier = Math.max(0.6, 2.5 - fishCount * 0.05); // 2.5 at 6 fish, down to 0.6 at 38+ fish
+                    
+                    // Top/bottom edges
+                    if (fish.y < softZone) {
+                        const force = ((softZone - fish.y) / softZone) * wallForceMultiplier;
+                        fish.targetVy += force * 0.12;
+                        fish.targetVx += (fish.vx > 0 ? 1 : -1) * force * 0.04;
+                    }
+                    if (fish.y > height - softZone) {
+                        const force = ((fish.y - (height - softZone)) / softZone) * wallForceMultiplier;
+                        fish.targetVy -= force * 0.12;
+                        fish.targetVx += (fish.vx > 0 ? 1 : -1) * force * 0.04;
+                    }
+                    // Left/right edges
+                    if (fish.x < softZone) {
+                        const force = ((softZone - fish.x) / softZone) * wallForceMultiplier;
+                        fish.targetVx += force * 0.10;
+                    }
+                    if (fish.x > width - softZone) {
+                        const force = ((fish.x - (width - softZone)) / softZone) * wallForceMultiplier;
+                        fish.targetVx -= force * 0.10;
+                    }
+
+                    // Stronger push if past visible edge, also scales
+                    const edgeForce = 0.35 * wallForceMultiplier;
+                    if (fish.x < -offscreenAllowance) fish.targetVx += edgeForce;
+                    if (fish.x > width + offscreenAllowance) fish.targetVx -= edgeForce;
+                    if (fish.y < -offscreenAllowance) fish.targetVy += edgeForce;
+                    if (fish.y > height + offscreenAllowance) fish.targetVy -= edgeForce;
+                });
+            }
+
+            // Apply physics to all fish
+            swimmingFish.forEach(fish => {
+                // Smooth velocity interpolation
+                fish.vx += (fish.targetVx - fish.vx) * turnSpeed;
+                fish.vy += (fish.targetVy - fish.vy) * turnSpeed;
+
+                // Speed limits
+                const speed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
+                if (speed > maxSpeed) {
+                    fish.vx = (fish.vx / speed) * maxSpeed;
+                    fish.vy = (fish.vy / speed) * maxSpeed;
+                    fish.targetVx = fish.vx;
+                    fish.targetVy = fish.vy;
+                }
+
+                // Minimum speed (only when swimming freely)
+                if (fishPhase === 'swimming' && speed < 0.4) {
+                    const boost = 0.4 / (speed || 0.1);
+                    fish.vx *= boost;
+                    fish.vy *= boost;
+                }
+
+                // Update position
+                fish.x += fish.vx;
+                fish.y += fish.vy;
+
+                // Soft boundary - allow slightly off-screen but clamp at max
+                fish.x = Math.max(-offscreenAllowance, Math.min(width + offscreenAllowance, fish.x));
+                fish.y = Math.max(-offscreenAllowance, Math.min(height + offscreenAllowance, fish.y));
+
+                // Calculate rotation - very smooth angle transitions
+                if (speed > 0.1) {
+                    const targetAngle = Math.atan2(fish.vy, fish.vx) * (180 / Math.PI);
+                    // Very smoothly interpolate angle for natural turning
+                    let angleDiff = targetAngle - fish.currentAngle;
+                    // Normalize angle difference to -180 to 180
+                    while (angleDiff > 180) angleDiff -= 360;
+                    while (angleDiff < -180) angleDiff += 360;
+                    fish.currentAngle += angleDiff * 0.05;  // Slower rotation
+                }
+
+                // Apply transform
+                const halfSize = (fish.size || 24) / 2;
+                const displayAngle = fish.currentAngle + 135; // Offset for SVG orientation
+                fish.el.style.transform = `translate(${fish.x - halfSize}px, ${fish.y - halfSize}px) rotate(${displayAngle}deg)`;
+            });
+
+            fishAnimationFrame = requestAnimationFrame(animateFish);
+        }
+
+        function stopFishSwim() {
+            fishSwimActive = false;
+            fishPhase = 'idle';
+            launchFrame = 0;
+            totalFishSpawned = 6; // Reset spawn counter
+
+            // Stop any spawn interval
+            if (spawnInterval) {
+                clearInterval(spawnInterval);
+                spawnInterval = null;
+            }
+
+            if (fishAnimationFrame) {
+                cancelAnimationFrame(fishAnimationFrame);
+                fishAnimationFrame = null;
+            }
+
+            // Remove swimming fish from the active pond
+            const pond = document.getElementById(activePondId);
+            if (pond) {
+                pond.innerHTML = '';
+            }
+
+            // Remove hover zone
+            const hoverZone = document.getElementById('fish-hover-zone');
+            if (hoverZone) {
+                hoverZone.remove();
+            }
+
+            // Show the logo again with smooth transition
+            const logo = document.getElementById(activeLogoId);
+            if (logo) {
+                logo.style.transition = 'opacity 0.3s ease-in';
+                logo.style.opacity = '1';
+                logo.style.pointerEvents = 'auto';
+            }
+
+            swimmingFish = [];
+        }
+        // ========== End Sakana Fish Easter Egg ==========
 
         function viewRun(runId) {
             // Find the run in the result dropdown and select it
@@ -11007,6 +12129,9 @@ ${'='.repeat(80)}
         const fetchCodexUsage = fetchAndRenderAgentUsage;
 
         // Fetch Claude CLI status and update card
+        // TODO: When Anthropic exposes a usage API for Claude Code Pro/Max subscriptions,
+        // add usage tracking here similar to Gemini and Codex.
+        // Use Anthropic brand colors for progress bars: #D97757 (coral/orange) to #C96442
         function fetchClaudeStatus() {
             fetch('/api/claude_status')
                 .then(response => response.json())
@@ -12500,11 +13625,47 @@ ${'='.repeat(80)}
             return html;
         }
 
+        // Cache for full program details (fetched on-demand for agent views)
+        const programDetailsCache = {};
+
         function isAgenticNode(node) {
             if (!node || !node.metadata) return false;
             if (node.metadata.patch_type === 'agentic') return true;
             const events = node.metadata.agent_session_events;
-            return Array.isArray(events) && events.length > 0;
+            if (Array.isArray(events) && events.length > 0) return true;
+            // Also check for filtered metadata indicator (events not loaded yet)
+            if (node.metadata._agent_session_events_size > 0) return true;
+            return false;
+        }
+
+        function needsDetailsFetch(node) {
+            // Check if we have size indicators but no actual data
+            if (!node || !node.metadata) return false;
+            const m = node.metadata;
+            return (m._agent_session_events_size > 0 && !Array.isArray(m.agent_session_events));
+        }
+
+        async function fetchProgramDetails(programId) {
+            if (programDetailsCache[programId]) {
+                return programDetailsCache[programId];
+            }
+            if (!window.currentDbPath) {
+                console.error('[DEBUG] No currentDbPath for fetching program details');
+                return null;
+            }
+            const url = `/get_program_details?db_path=${encodeURIComponent(window.currentDbPath)}&program_id=${encodeURIComponent(programId)}`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                programDetailsCache[programId] = data;
+                return data;
+            } catch (error) {
+                console.error('[DEBUG] Failed to fetch program details:', error);
+                return null;
+            }
         }
 
         function renderAgenticTimeline(node) {
@@ -12515,6 +13676,39 @@ ${'='.repeat(80)}
             const domSafeId = makeDomSafeId(programId);
             const sessionTargetId = `session-log-preview-${domSafeId}`;
             const timelineContainerId = `codex-timeline-${domSafeId}`;
+
+            // Check if we need to lazy-load the full details - auto-fetch in background
+            if (needsDetailsFetch(node)) {
+                // Trigger auto-fetch immediately (non-blocking)
+                autoFetchAndRenderDetails(programId, domSafeId);
+
+                return `
+                    <div class="codex-section">
+                        <div class="codex-section-header">
+                            <h5>Session Timeline</h5>
+                        </div>
+                        <div class="codex-timeline-loading" id="timeline-loading-${domSafeId}" style="padding: 40px; text-align: center;">
+                            <div style="display: inline-block; width: 24px; height: 24px; border: 3px solid #e1e4e8; border-top-color: #0366d6; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                            <p style="margin-top: 12px; color: #586069;">Loading session timeline...</p>
+                        </div>
+                        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+                    </div>
+                    <div class="codex-section">
+                        <div class="codex-section-header">
+                            <h5>Session Log</h5>
+                            <div class="codex-actions">
+                                <button class="secondary" data-action="fetch-session-log" data-program-id="${programId}" data-target-id="${sessionTargetId}">Load log</button>
+                                <button class="secondary" data-action="download-session-log" data-program-id="${programId}">Download JSONL</button>
+                            </div>
+                        </div>
+                        <div id="${sessionTargetId}" class="session-log-preview">Session log not loaded yet.</div>
+                    </div>
+                    <div class="codex-section">
+                        <div class="codex-section-header"><h5>Binary Attachments</h5></div>
+                        ${binaryHtml}
+                    </div>
+                `;
+            }
 
             const eventsSource = Array.isArray(metadata.agent_session_events) ? metadata.agent_session_events : [];
             const rawEventsSlice = eventsSource.slice(-MAX_TIMELINE_EVENTS);
@@ -12738,10 +13932,14 @@ ${'='.repeat(80)}
             if (Object.keys(params).length > 0) {
                 // Show key params inline with smart truncation
                 const keyParams = ['file_path', 'command', 'query', 'text', 'path', 'url', 'pattern'];
+                // Fields to exclude from generic parameters because they are visualized specially
+                const excludeParams = ['content', 'diff', 'old_string', 'new_string']; 
                 const inlineParams = [];
                 const otherParams = {};
 
                 for (const [key, value] of Object.entries(params)) {
+                    if (excludeParams.includes(key)) continue;
+
                     if (keyParams.includes(key) && typeof value === 'string') {
                         const isPath = key.includes('path') || key === 'file_path' || key === 'url';
                         const isCommand = key === 'command';
@@ -12771,6 +13969,18 @@ ${'='.repeat(80)}
                 paramsHtml = `<div class="tool-params">${renderExpandableValue('command', event.command, { maxPreviewLength: 70, isCommand: true })}</div>`;
             } else if (event.details && !isLikelyJson(event.details)) {
                 paramsHtml = `<p style="margin:0;color:#57606a;font-size:13px;">${escapeHtml(event.details)}</p>`;
+            }
+
+            // Enhanced visualization for file operations
+            if (event.diff) {
+                paramsHtml += `<div class="diff-view" style="margin-top: 10px; border: 1px solid #e1e4e8; border-radius: 6px; overflow: hidden;">${formatSimpleDiff(event.diff)}</div>`;
+            } else if (event.codeBlock) {
+                const content = event.codeBlock;
+                const maxLength = 3000;
+                const displayContent = content.length > maxLength 
+                    ? content.slice(0, maxLength) + `\n... (${content.length - maxLength} chars truncated)` 
+                    : content;
+                paramsHtml += renderTerminalBlock('File Content', displayContent, false);
             }
 
             return `<div class="tool-info">${paramsHtml}</div>`;
@@ -13321,7 +14531,22 @@ ${'='.repeat(80)}
 
                 const normalizedEvent = mapTimelineEvent(eventObj, ++visibleIndex, currentTurn);
                 if (normalizedEvent) {
-                    normalized.push(normalizedEvent);
+                    const prev = normalized.length > 0 ? normalized[normalized.length - 1] : null;
+                    if (prev && 
+                        prev.category === 'reasoning' && 
+                        normalizedEvent.category === 'reasoning' && 
+                        prev.turnId === normalizedEvent.turnId) {
+                        
+                        // Merge reasoning/agent_message events to prevent fragmentation
+                        const item = eventObj && typeof eventObj.item === 'object' ? eventObj.item : null;
+                        const text = item?.text || '';
+                        if (text) {
+                            prev.details = (prev.details || '') + text;
+                        }
+                        visibleIndex--;
+                    } else {
+                        normalized.push(normalizedEvent);
+                    }
                 }
             });
 
@@ -13371,10 +14596,27 @@ ${'='.repeat(80)}
             } else if (baseType === 'tool_use') {
                 normalized.category = 'tool';
                 normalized.displayType = 'Tool Use';
-                normalized.title = item?.tool_name ? `Tool: ${item.tool_name}` : 'Tool Use';
-                normalized.details = item?.parameters ? JSON.stringify(item.parameters, null, 2) : '';
-                if (item?.parameters && typeof item.parameters.command === 'string') {
-                    normalized.command = item.parameters.command;
+                
+                const toolName = item?.tool_name || event.tool_name;
+                const toolParams = item?.parameters || event.parameters;
+
+                normalized.title = toolName ? `Tool: ${toolName}` : 'Tool Use';
+                normalized.details = toolParams ? JSON.stringify(toolParams, null, 2) : '';
+                if (toolParams && typeof toolParams.command === 'string') {
+                    normalized.command = toolParams.command;
+                }
+
+                // Enhanced visualization for file operations
+                if (toolName === 'write_file' || toolName === 'replace' || toolName === 'edit' || toolName === 'patch') {
+                    if (toolParams?.diff) {
+                        normalized.diff = toolParams.diff;
+                    } else if (toolParams?.content) {
+                        normalized.codeBlock = toolParams.content;
+                    } else if (toolParams?.old_string && toolParams?.new_string) {
+                        const fp = toolParams.file_path || 'file';
+                        // Synthesize a diff for display
+                        normalized.diff = `--- ${fp}\n+++ ${fp}\n@@ -1 +1 @@\n-${toolParams.old_string.replace(/\n/g, '\\n')}\n+${toolParams.new_string.replace(/\n/g, '\\n')}`;
+                    }
                 }
             } else if (baseType === 'todo_list') {
                 normalized.category = 'todo';
@@ -13647,6 +14889,107 @@ ${'='.repeat(80)}
                 return;
             }
 
+            // Handle lazy-load program details button
+            const loadDetailsBtn = event.target.closest('[data-action="load-program-details"]');
+            if (loadDetailsBtn) {
+                const programId = loadDetailsBtn.getAttribute('data-program-id');
+                loadProgramDetailsAndRerender(programId, loadDetailsBtn);
+                return;
+            }
+
+        }
+
+        async function loadProgramDetailsAndRerender(programId, button) {
+            // Show loading state
+            const originalText = button.textContent;
+            button.textContent = 'Loading...';
+            button.disabled = true;
+
+            try {
+                const fullData = await fetchProgramDetails(programId);
+                if (!fullData) {
+                    button.textContent = 'Load Failed - Retry';
+                    button.disabled = false;
+                    return;
+                }
+
+                // Update the node in window.treeData with full metadata
+                let nodeData = fullData;
+                if (window.treeData && Array.isArray(window.treeData)) {
+                    const nodeIndex = window.treeData.findIndex(n => String(n.id) === String(programId));
+                    if (nodeIndex !== -1) {
+                        // Merge full metadata into existing node
+                        window.treeData[nodeIndex].metadata = fullData.metadata || window.treeData[nodeIndex].metadata;
+                        // Also update code and other fields if needed
+                        if (fullData.code) window.treeData[nodeIndex].code = fullData.code;
+                        if (fullData.code_diff) window.treeData[nodeIndex].code_diff = fullData.code_diff;
+                        nodeData = window.treeData[nodeIndex];
+                    }
+                }
+
+                // Re-render the LLM result panel with full data
+                const llmResultContainer = document.getElementById("llm-result");
+                if (isAgenticNode(nodeData)) {
+                    llmResultContainer.innerHTML = renderAgenticTimeline(nodeData);
+                }
+
+                // Re-apply syntax highlighting
+                document.querySelectorAll('pre code:not(.nohighlight)').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+
+                console.log('[DEBUG] Loaded full program details for:', programId);
+            } catch (error) {
+                console.error('[DEBUG] Error loading program details:', error);
+                button.textContent = 'Load Failed - Retry';
+                button.disabled = false;
+            }
+        }
+
+        // Auto-fetch version that doesn't require a button click
+        async function autoFetchAndRenderDetails(programId, domSafeId) {
+            try {
+                const fullData = await fetchProgramDetails(programId);
+                if (!fullData) {
+                    // Show error in the loading area
+                    const loadingEl = document.getElementById(`timeline-loading-${domSafeId}`);
+                    if (loadingEl) {
+                        loadingEl.innerHTML = '<p style="color: #cb2431;">Failed to load session data. <a href="#" onclick="location.reload(); return false;">Refresh</a> to retry.</p>';
+                    }
+                    return;
+                }
+
+                // Update the node in window.treeData with full metadata
+                let nodeData = fullData;
+                if (window.treeData && Array.isArray(window.treeData)) {
+                    const nodeIndex = window.treeData.findIndex(n => String(n.id) === String(programId));
+                    if (nodeIndex !== -1) {
+                        window.treeData[nodeIndex].metadata = fullData.metadata || window.treeData[nodeIndex].metadata;
+                        if (fullData.code) window.treeData[nodeIndex].code = fullData.code;
+                        if (fullData.code_diff) window.treeData[nodeIndex].code_diff = fullData.code_diff;
+                        nodeData = window.treeData[nodeIndex];
+                    }
+                }
+
+                // Re-render the LLM result panel with full data
+                const llmResultContainer = document.getElementById("llm-result");
+                if (llmResultContainer && isAgenticNode(nodeData)) {
+                    llmResultContainer.innerHTML = renderAgenticTimeline(nodeData);
+                }
+
+                // Re-apply syntax highlighting
+                document.querySelectorAll('pre code:not(.nohighlight)').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+
+                console.log('[DEBUG] Auto-loaded program details for:', programId);
+            } catch (error) {
+                console.error('[DEBUG] Error auto-loading program details:', error);
+                const loadingEl = document.getElementById(`timeline-loading-${domSafeId}`);
+                if (loadingEl) {
+                    loadingEl.innerHTML = '<p style="color: #cb2431;">Failed to load session data.</p>';
+                }
+            }
         }
 
         async function handleEvaluationPanelClick(event) {
@@ -13952,6 +15295,25 @@ ${'='.repeat(80)}
         }
 
 
+        function formatSimpleDiff(diffText) {
+            if (!diffText) return '';
+            const lines = diffText.split('\n');
+            const htmlLines = lines.map(line => {
+                if (line.startsWith('--- ') || line.startsWith('+++ ')) return '';
+                // Filter out internal history paths from diff headers
+                if (line.trim().startsWith('@') && line.includes('.claude/file-history')) return '';
+
+                const escaped = escapeHtml(line);
+                let style = 'white-space: pre; padding: 0 4px; display: block;';
+                if (line.startsWith('+')) style += ' background-color: #dafbe1; color: #1a7f37;';
+                else if (line.startsWith('-')) style += ' background-color: #ffebe9; color: #cf222e;';
+                else if (line.startsWith('@@')) style += ' color: #57606a; background-color: #f1f8ff; font-weight: bold;';
+                
+                return `<div style="${style}">${escaped}</div>`;
+            }).join('');
+            return `<div style="font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; overflow-x: auto; background: #ffffff; padding: 4px;">${htmlLines}</div>`;
+        }
+
         function formatDiff(diffText) {
             if (!diffText) return '';
             
@@ -14085,7 +15447,7 @@ ${'='.repeat(80)}
                 const costCanvas = document.getElementById('costChart');
 
                 if (!scoreCanvas || !costCanvas) {
-                    console.error("[DEBUG] Canvas elements not found!");
+                    // console.debug("[DEBUG] Canvas elements not found!");
                     return;
                 }
 
@@ -15138,6 +16500,13 @@ ${'='.repeat(80)}
             return clusters[0]; // Return the final ordering
         }
 
+        // Performance limits for embedding visualizations
+        const EMBEDDING_LIMITS = {
+            MAX_PROGRAMS_FOR_HEATMAP: 500,      // Beyond this, heatmap becomes unusable
+            MAX_PROGRAMS_FOR_CLUSTERING: 200,   // O(n³) clustering is expensive
+            WARN_THRESHOLD: 300                  // Show warning above this
+        };
+
         function createEmbeddingsHeatmap(data) {
             console.log("[DEBUG] Creating embeddings heatmap");
 
@@ -15193,7 +16562,7 @@ ${'='.repeat(80)}
             }
 
             // Filter data with embeddings
-            const dataWithEmbeddings = filteredData.filter(d => d.embedding && Array.isArray(d.embedding) && d.embedding.length > 0);
+            let dataWithEmbeddings = filteredData.filter(d => d.embedding && Array.isArray(d.embedding) && d.embedding.length > 0);
 
             if (dataWithEmbeddings.length === 0) {
                 d3.select("#embeddings-heatmap")
@@ -15203,6 +16572,21 @@ ${'='.repeat(80)}
                     .style("margin-top", "50px")
                     .text("No embedding data available for visualization.");
                 return;
+            }
+
+            // Performance safeguard: limit programs for visualization
+            let limitWarning = null;
+            const originalCount = dataWithEmbeddings.length;
+            
+            if (dataWithEmbeddings.length > EMBEDDING_LIMITS.MAX_PROGRAMS_FOR_HEATMAP) {
+                // Sample evenly across generations for representative view
+                const sortedByGen = [...dataWithEmbeddings].sort((a, b) => a.generation - b.generation);
+                const step = Math.ceil(sortedByGen.length / EMBEDDING_LIMITS.MAX_PROGRAMS_FOR_HEATMAP);
+                dataWithEmbeddings = sortedByGen.filter((_, i) => i % step === 0).slice(0, EMBEDDING_LIMITS.MAX_PROGRAMS_FOR_HEATMAP);
+                limitWarning = `Showing ${dataWithEmbeddings.length} of ${originalCount} programs (sampled for performance). Large-scale similarity analysis should use dedicated tools.`;
+                console.warn(`[PERF] Limiting embeddings heatmap from ${originalCount} to ${dataWithEmbeddings.length} programs`);
+            } else if (dataWithEmbeddings.length > EMBEDDING_LIMITS.WARN_THRESHOLD) {
+                limitWarning = `Visualizing ${dataWithEmbeddings.length} programs. For very large evolutions (1000+), consider using sampling or dedicated analysis tools.`;
             }
 
             // Find best node within the current set of programs with embeddings
@@ -15226,6 +16610,20 @@ ${'='.repeat(80)}
                 .style("overflow-y", "auto")
                 .style("padding", "10px")
                 .style("box-sizing", "border-box");
+
+            // Show performance warning if needed
+            if (limitWarning) {
+                mainContainer.append("div")
+                    .style("background", "#fff3cd")
+                    .style("border", "1px solid #ffc107")
+                    .style("border-radius", "6px")
+                    .style("padding", "10px 15px")
+                    .style("margin-bottom", "15px")
+                    .style("font-size", "13px")
+                    .style("color", "#856404")
+                    .style("max-width", "800px")
+                    .html(`⚠️ <strong>Performance Note:</strong> ${limitWarning}`);
+            }
 
             // Add main heatmap title
             mainContainer.append("h3")
@@ -15385,8 +16783,14 @@ ${'='.repeat(80)}
             const sortMethod = document.getElementById('embedding-sort-method').value;
 
             if (sortMethod === 'cluster' && dataWithEmbeddings.length > 1) {
-                ordering = hierarchicalClustering(similarityMatrix);
-                console.log(`[DEBUG] Applied hierarchical clustering ${isSubplot ? 'to subplot' : 'to main plot'}`);
+                // Safeguard: clustering is O(n³), disable for large datasets
+                if (dataWithEmbeddings.length > EMBEDDING_LIMITS.MAX_PROGRAMS_FOR_CLUSTERING) {
+                    console.warn(`[PERF] Clustering disabled: ${dataWithEmbeddings.length} programs exceeds limit of ${EMBEDDING_LIMITS.MAX_PROGRAMS_FOR_CLUSTERING}. Using chronological order.`);
+                    // Fall through to default chronological ordering
+                } else {
+                    ordering = hierarchicalClustering(similarityMatrix);
+                    console.log(`[DEBUG] Applied hierarchical clustering ${isSubplot ? 'to subplot' : 'to main plot'}`);
+                }
             } else if (sortMethod === 'performance') {
                 const indexedPrograms = dataWithEmbeddings.map((p, i) => ({ ...p, originalIndex: i }));
 
@@ -19136,10 +20540,19 @@ ${'='.repeat(80)}
                     <button onclick="savePreset()">Save</button>
                     <button onclick="deletePreset()">Delete</button>
                 </div>
+                <div class="compute-budget-control">
+                    <label>Compute Budget</label>
+                    <div class="slider-container">
+                        <span class="slider-label">Light</span>
+                        <input type="range" id="compute-budget" min="0" max="100" value="50">
+                        <span class="slider-label">Heavy</span>
+                    </div>
+                </div>
                 <div class="new-run-tabs">
                     <div class="new-run-tab active" data-tab="codebase-tab">Codebase</div>
                     <div class="new-run-tab" data-tab="agent-tab">Agent</div>
                     <div class="new-run-tab" data-tab="evaluator-tab">Evaluator</div>
+                    <div class="new-run-tab" data-tab="scratchpad-tab">Scratchpad</div>
                     <div class="new-run-tab" data-tab="run-tab">Run Config</div>
                 </div>
                 <div class="new-run-tab-content">
@@ -19172,7 +20585,6 @@ ${'='.repeat(80)}
                                             </svg>
                                         </button>
                                     </div>
-                                    <small style="color: var(--text-muted, #888); margin-top: 4px; display: block;">Click the folder button to browse, or <a href="#" onclick="openCustomFolderBrowser(document.getElementById('local-path').value); return false;" style="color: var(--link-color, #63b3ed);">browse manually</a></small>
                                 </div>
                             </div>
                             <div id="git-source-config" class="source-config" style="display: none;">
@@ -19196,6 +20608,59 @@ ${'='.repeat(80)}
                                 <span class="help-text">Creates an isolated copy to evolve code safely without modifying the original</span>
                             </div>
                         </div>
+                        <details class="form-section advanced-section">
+                            <summary><h3>Storage & Performance</h3></summary>
+                            <div class="advanced-content">
+                                <!-- Novelty Detection subsection -->
+                                <div class="subsection">
+                                    <div class="subsection-header">
+                                        <span class="subsection-title">Novelty Detection</span>
+                                        <span class="help-text">How much code is analyzed for novelty-based parent selection</span>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="embedding-max-files">Max Files</label>
+                                            <input type="number" id="embedding-max-files" value="500" min="10" max="10000">
+                                            <span class="help-text">Files to embed</span>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="embedding-max-total-bytes">Total Size Limit</label>
+                                            <div class="input-with-suffix">
+                                                <input type="number" id="embedding-max-total-bytes" value="2" min="0.1" max="50" step="0.1" onchange="updateBytesDisplay(this, 'total')">
+                                                <span class="input-suffix">MB</span>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="embedding-max-bytes-per-file">Per-File Limit</label>
+                                            <div class="input-with-suffix">
+                                                <input type="number" id="embedding-max-bytes-per-file" value="500" min="10" max="5000" step="10" onchange="updateBytesDisplay(this, 'perfile')">
+                                                <span class="input-suffix">KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Disk Management subsection -->
+                                <div class="subsection" style="margin-top: 16px;">
+                                    <div class="subsection-header">
+                                        <span class="subsection-title">Disk Management</span>
+                                        <span class="help-text">Control storage usage during long evolution runs</span>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="cleanup-old-generations" onchange="toggleCleanupRetention()">
+                                            Auto-cleanup old generations
+                                        </label>
+                                    </div>
+                                    <div class="form-group dependent-field" id="cleanup-keep-n-group" style="display: none; margin-left: 24px;">
+                                        <label for="cleanup-keep-last-n">Keep last</label>
+                                        <div class="input-with-suffix" style="width: 140px;">
+                                            <input type="number" id="cleanup-keep-last-n" value="50" min="5" max="1000">
+                                            <span class="input-suffix">generations</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
                     </div>
 
                     <!-- Agent Tab -->
@@ -19301,6 +20766,46 @@ ${'='.repeat(80)}
                         </div>
                     </div>
 
+                    <!-- Scratchpad Tab -->
+                    <div id="scratchpad-tab" class="tab-panel">
+                        <div class="form-section">
+                            <h3>Meta-Learning Scratchpad</h3>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="scratchpad-enabled">
+                                    Enable Scratchpad
+                                </label>
+                                <span class="help-text">Periodically analyzes evolution progress to extract patterns and guide future mutations</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="scratchpad-backend">Backend</label>
+                                <select id="scratchpad-backend">
+                                    <option value="codex" selected>Codex CLI</option>
+                                    <option value="claude">Claude CLI</option>
+                                    <option value="gemini">Gemini CLI</option>
+                                    <option value="shinka">ShinkaAgent</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="scratchpad-interval">Update Interval</label>
+                                    <input type="number" id="scratchpad-interval" value="5" min="1" max="100">
+                                    <span class="help-text">Every N programs</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="scratchpad-max-recommendations">Max Recommendations</label>
+                                    <input type="number" id="scratchpad-max-recommendations" value="5" min="1" max="20">
+                                </div>
+                            </div>
+                        </div>
+                        <details class="form-section" style="margin-top: 8px;">
+                            <summary style="cursor: pointer; color: var(--text-muted, #888); font-size: 0.85em; padding: 4px 0;">How it works</summary>
+                            <div style="color: var(--text-muted, #888); font-size: 0.85em; line-height: 1.5; margin-top: 8px; padding-left: 4px;">
+                                The agent explores <code style="background: var(--bg-secondary, #2d2d2d); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;">gen_*/</code> to read code and metrics, summarizes each program, extracts insights about what works, and generates recommendations. Output saved to <code style="background: var(--bg-secondary, #2d2d2d); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;">_meta/</code>.
+                            </div>
+                        </details>
+                    </div>
+
                     <!-- Run Config Tab -->
                     <div id="run-tab" class="tab-panel">
                         <div class="form-section">
@@ -19326,8 +20831,8 @@ ${'='.repeat(80)}
                             <h3>Stopping Conditions</h3>
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label for="target-score">Target Score (optional)</label>
-                                    <input type="number" id="target-score" step="0.001" placeholder="Stop when reached">
+                                    <label for="max-score">Max Score</label>
+                                    <input type="number" id="max-score" step="0.001" value="1" placeholder="Maximum possible score">
                                 </div>
                                 <div class="form-group">
                                     <label for="max-runtime-hours">Max Hours (0 = unlimited)</label>
@@ -19340,9 +20845,9 @@ ${'='.repeat(80)}
                             <div class="advanced-content">
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label for="num-islands">Islands</label>
+                                        <label for="num-islands">Initial Samples (Islands)</label>
                                         <input type="number" id="num-islands" value="2" min="1" max="16">
-                                        <span class="help-text">Parallel evolutionary populations</span>
+                                        <span class="help-text">Parallel branches that evolve & share solutions</span>
                                     </div>
                                     <div class="form-group">
                                         <label for="archive-size">Archive Size</label>
@@ -19380,31 +20885,6 @@ ${'='.repeat(80)}
 
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
-
-    <!-- Folder Browser Modal -->
-    <div id="folder-browser-modal" class="modal-overlay" style="z-index: 10001;">
-        <div class="modal-content" style="width: 600px; max-width: 90vw;">
-            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color);">
-                <h2 style="margin: 0; font-size: 18px;">Browse Folders</h2>
-                <button onclick="closeFolderBrowser()" style="background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-muted);">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <div style="padding: 16px 20px; border-bottom: 1px solid var(--border-color);">
-                <div style="display: flex; gap: 8px;">
-                    <input type="text" id="folder-browser-path" placeholder="/path/to/folder" style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); color: var(--text-color); font-family: monospace; font-size: 13px;" onkeydown="if(event.key==='Enter')navigateToPath()">
-                    <button onclick="navigateToPath()" style="padding: 8px 16px; background: var(--button-bg); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;">Go</button>
-                </div>
-            </div>
-            <div id="folder-browser-content" style="min-height: 350px; padding: 12px 20px;">
-                <!-- Folder list populated by JS -->
-            </div>
-            <div style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px;">
-                <button onclick="closeFolderBrowser()" style="padding: 8px 20px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;">Cancel</button>
-                <button onclick="selectCurrentFolder()" style="padding: 8px 20px; background: var(--primary-color, #4299e1); border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: 500;">Select This Folder</button>
-            </div>
-        </div>
-    </div>
 
     <script>
         // Unified API Key Modal Functions
@@ -19535,15 +21015,43 @@ ${'='.repeat(80)}
             return `shinka_api_key_${providerId}`;
         }
 
+        // Runtime cache for credential status (not the actual keys!)
+        // Keys are stored only on backend, this cache holds masked versions for display
+        const credentialStatusCache = {};
+
         function getApiKey(providerId) {
-            return localStorage.getItem(getStorageKey(providerId)) || '';
+            // Return cached status (masked key or empty)
+            // Actual keys are only stored on the backend
+            return credentialStatusCache[providerId] || '';
         }
 
         function setApiKey(providerId, key) {
+            // Only cache the masked version for display, never store full key in browser
             if (key) {
-                localStorage.setItem(getStorageKey(providerId), key);
+                credentialStatusCache[providerId] = maskApiKey(key);
             } else {
-                localStorage.removeItem(getStorageKey(providerId));
+                delete credentialStatusCache[providerId];
+            }
+        }
+
+        // Fetch credential status from backend on modal open
+        async function refreshCredentialStatus() {
+            try {
+                const response = await fetch('/api/credentials');
+                const data = await response.json();
+                if (data.ok && data.providers) {
+                    // Update cache with status (we don't get actual keys, just configured status)
+                    for (const [providerId, status] of Object.entries(data.providers)) {
+                        if (status.configured) {
+                            // Mark as configured with a placeholder
+                            credentialStatusCache[providerId] = '••••••••••••';
+                        } else {
+                            delete credentialStatusCache[providerId];
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to fetch credential status:', err);
             }
         }
 
@@ -19663,20 +21171,29 @@ ${'='.repeat(80)}
             }
         }
 
-        function saveProviderKey(providerId) {
+        async function saveProviderKey(providerId) {
             const input = document.getElementById(`api-key-input-${providerId}`);
             if (!input) return;
 
             const key = input.value.trim();
-            
-            // Save to localStorage immediately for quick access
-            setApiKey(providerId, key);
-            
-            // Also sync to backend for ShinkaAgent to use
-            syncCredentialToBackend(providerId, key, 'set').catch(err => {
-                console.warn('Failed to sync credential to backend:', err);
-            });
-            
+            const provider = apiKeyProviders.find(p => p.id === providerId) || getAllProviders().find(p => p.id === providerId);
+
+            try {
+                // Save to backend only (not localStorage for security)
+                await syncCredentialToBackend(providerId, key, 'set');
+
+                // Update local cache with masked version for display
+                setApiKey(providerId, key);
+
+                if (key) {
+                    showToast(`${provider?.name || providerId} API key saved`, 'success');
+                }
+            } catch (err) {
+                showToast(`Failed to save ${provider?.name || providerId} API key`, 'error');
+                console.error('Failed to save credential:', err);
+                return;
+            }
+
             // Track auth metric
             if (window.shinkaMetrics) {
                 window.shinkaMetrics.authEvents = window.shinkaMetrics.authEvents || [];
@@ -19688,32 +21205,34 @@ ${'='.repeat(80)}
                 });
             }
 
-            const provider = apiKeyProviders.find(p => p.id === providerId);
-            if (key) {
-                showToast(`${provider?.name || providerId} API key saved`, 'success');
-            }
-
             expandedProvider = null;
             renderApiKeysList();
-            
+
             // Trigger UI refresh
             if (typeof fetchAndRenderAgentUsage === 'function') {
                 fetchAndRenderAgentUsage();
             }
         }
 
-        function deleteApiKey(providerId) {
-            setApiKey(providerId, '');
-            
-            // Also sync deletion to backend
-            syncCredentialToBackend(providerId, '', 'delete').catch(err => {
-                console.warn('Failed to sync credential deletion to backend:', err);
-            });
-            
-            const provider = apiKeyProviders.find(p => p.id === providerId);
-            showToast(`${provider?.name || providerId} API key removed`, 'info');
+        async function deleteApiKey(providerId) {
+            const provider = apiKeyProviders.find(p => p.id === providerId) || getAllProviders().find(p => p.id === providerId);
+
+            try {
+                // Delete from backend
+                await syncCredentialToBackend(providerId, '', 'delete');
+
+                // Clear from local cache
+                setApiKey(providerId, '');
+
+                showToast(`${provider?.name || providerId} API key removed`, 'info');
+            } catch (err) {
+                showToast(`Failed to remove ${provider?.name || providerId} API key`, 'error');
+                console.error('Failed to delete credential:', err);
+                return;
+            }
+
             renderApiKeysList();
-            
+
             if (typeof fetchAndRenderAgentUsage === 'function') {
                 fetchAndRenderAgentUsage();
             }
@@ -19744,10 +21263,13 @@ ${'='.repeat(80)}
             }
         }
 
-        function openApiKeyModal(provider) {
+        async function openApiKeyModal(provider) {
+            // Fetch latest credential status from backend before showing modal
+            await refreshCredentialStatus();
+
             // Map legacy provider IDs to new ones
             const mappedProvider = providerIdMap[provider] || provider;
-            
+
             // If a specific provider was requested, expand it
             if (mappedProvider && getAllProviders().find(p => p.id === mappedProvider)) {
                 expandedProvider = mappedProvider;
@@ -19850,18 +21372,18 @@ ${'='.repeat(80)}
         const oauthHelpMessages = {
             codex: {
                 title: 'Codex CLI Authentication',
-                message: 'To authenticate with OpenAI, run this command in your terminal:\n\ncodex auth login\n\nOnce logged in, Codex CLI will automatically use your credentials.',
-                docsUrl: 'https://docs.openai.com/codex'
+                message: 'To authenticate with OpenAI, run:\n\ncodex login\n\nThis opens a browser for ChatGPT OAuth login.\n\nFor API key authentication:\necho $OPENAI_API_KEY | codex login --with-api-key',
+                docsUrl: 'https://github.com/openai/codex'
             },
             gemini: {
                 title: 'Gemini CLI Authentication',
-                message: 'To authenticate with Google, run this command in your terminal:\n\ngemini auth login\n\nAlternatively, you can set up gcloud credentials:\n\ngcloud auth application-default login',
-                docsUrl: 'https://aistudio.google.com/app/apikey'
+                message: 'To authenticate with Google, simply run:\n\ngemini\n\nThis will prompt you to choose an auth method:\n• Login with Google (browser OAuth)\n• Use API Key (set GEMINI_API_KEY env var)',
+                docsUrl: 'https://github.com/google-gemini/gemini-cli'
             },
             claude: {
                 title: 'Claude Code Authentication',
-                message: 'Claude Code integration is coming soon!\n\nFor now, you can use your Anthropic API key by clicking "Use API Key".',
-                docsUrl: 'https://docs.anthropic.com/'
+                message: 'To authenticate with Anthropic, simply run:\n\nclaude\n\nThis will prompt you to log in with your Claude account.\n\nFor long-lived tokens:\nclaude setup-token',
+                docsUrl: 'https://docs.anthropic.com/en/docs/claude-code'
             }
         };
 
@@ -19990,6 +21512,15 @@ ${'='.repeat(80)}
             if (typeof attachRealtimeListeners === 'function') {
                 attachRealtimeListeners();
             }
+            // Initialize compute budget slider listeners
+            if (typeof attachComputeBudgetListeners === 'function') {
+                attachComputeBudgetListeners();
+            }
+            // Apply initial slider value to fields
+            const slider = document.getElementById('compute-budget');
+            if (slider) {
+                applyComputeBudget(parseInt(slider.value));
+            }
         }
 
         // Close the new run modal
@@ -20005,124 +21536,38 @@ ${'='.repeat(80)}
             document.getElementById('git-source-config').style.display = sourceType === 'git' ? 'block' : 'none';
         }
 
-        // Folder Browser State
-        let folderBrowserCurrentPath = '';
+        // Toggle cleanup retention field visibility
+        function toggleCleanupRetention() {
+            const enabled = document.getElementById('cleanup-old-generations').checked;
+            document.getElementById('cleanup-keep-n-group').style.display = enabled ? 'block' : 'none';
+        }
 
-        // Open folder picker - tries native OS dialog first, falls back to custom browser
+        // Open folder picker - uses native OS dialog
         async function openFolderPicker() {
             const currentValue = document.getElementById('local-path').value;
 
-            // Try native picker first
             try {
                 const response = await fetch(`/api/folder_picker_native?initial_dir=${encodeURIComponent(currentValue || '')}`);
                 const data = await response.json();
 
                 if (data.ok && data.path) {
-                    // Success! Set the path and we're done
                     document.getElementById('local-path').value = data.path;
                     return;
                 }
 
                 if (data.ok && !data.path) {
-                    // User cancelled the dialog, do nothing
+                    // User cancelled the dialog
                     return;
                 }
-
-                // If fallback requested or error, use custom browser
-                if (data.fallback || !data.ok) {
-                    console.log('Native folder picker unavailable, using custom browser:', data.error);
-                    openCustomFolderBrowser(currentValue);
-                }
-            } catch (err) {
-                // Network error or other issue, fall back to custom browser
-                console.log('Native folder picker failed, using custom browser:', err);
-                openCustomFolderBrowser(currentValue);
-            }
-        }
-
-        // Open the custom in-browser folder picker (fallback)
-        function openCustomFolderBrowser(startPath) {
-            loadFolderBrowser(startPath || '');
-            document.getElementById('folder-browser-modal').classList.add('visible');
-        }
-
-        // Close folder browser modal
-        function closeFolderBrowser() {
-            document.getElementById('folder-browser-modal').classList.remove('visible');
-        }
-
-        // Load folder browser contents
-        async function loadFolderBrowser(path) {
-            const container = document.getElementById('folder-browser-content');
-            container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Loading...</div>';
-
-            try {
-                const url = path ? `/api/browse_folders?path=${encodeURIComponent(path)}` : '/api/browse_folders';
-                const response = await fetch(url);
-                const data = await response.json();
 
                 if (!data.ok) {
-                    container.innerHTML = `<div style="padding: 20px; color: #e53e3e;">${data.error}</div>`;
-                    return;
+                    console.error('Native folder picker error:', data.error);
+                    showToast('Could not open folder picker: ' + (data.error || 'Unknown error'), 'error');
                 }
-
-                folderBrowserCurrentPath = data.current_path;
-                document.getElementById('folder-browser-path').value = data.current_path;
-
-                let html = '';
-
-                // Quick access sidebar
-                html += '<div style="display: flex; gap: 16px; height: 350px;">';
-                html += '<div style="width: 140px; border-right: 1px solid var(--border-color); padding-right: 12px; overflow-y: auto;">';
-                html += '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">Quick Access</div>';
-                for (const loc of data.quick_access) {
-                    html += `<div onclick="loadFolderBrowser('${loc.path.replace(/'/g, "\\'")}')" style="padding: 6px 8px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">${loc.name}</div>`;
-                }
-                html += '</div>';
-
-                // Folder list
-                html += '<div style="flex: 1; overflow-y: auto; padding-left: 12px;">';
-
-                // Parent directory link
-                if (data.parent_path) {
-                    html += `<div onclick="loadFolderBrowser('${data.parent_path.replace(/'/g, "\\'")}')" style="padding: 8px 12px; cursor: pointer; border-radius: 4px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">`;
-                    html += '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>';
-                    html += '<span style="color: var(--text-muted);">..</span>';
-                    html += '</div>';
-                }
-
-                // Folders
-                if (data.folders.length === 0) {
-                    html += '<div style="padding: 20px; color: var(--text-muted); text-align: center;">No subfolders</div>';
-                } else {
-                    for (const folder of data.folders) {
-                        html += `<div onclick="loadFolderBrowser('${folder.path.replace(/'/g, "\\'")}')" style="padding: 8px 12px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; display: flex; align-items: center; gap: 8px;" onmouseover="this.style.background='var(--hover-bg, #374151)'" onmouseout="this.style.background='transparent'">`;
-                        html += '<svg width="16" height="16" viewBox="0 0 24 24" fill="#4299e1" stroke="none"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>';
-                        html += `<span>${folder.name}</span>`;
-                        html += '</div>';
-                    }
-                }
-
-                html += '</div></div>';
-
-                container.innerHTML = html;
             } catch (err) {
-                container.innerHTML = `<div style="padding: 20px; color: #e53e3e;">Error: ${err.message}</div>`;
+                console.error('Native folder picker failed:', err);
+                showToast('Could not open folder picker', 'error');
             }
-        }
-
-        // Navigate to path typed in the path bar
-        function navigateToPath() {
-            const path = document.getElementById('folder-browser-path').value;
-            if (path) {
-                loadFolderBrowser(path);
-            }
-        }
-
-        // Select the current folder
-        function selectCurrentFolder() {
-            document.getElementById('local-path').value = folderBrowserCurrentPath;
-            closeFolderBrowser();
         }
 
         // Toggle agentic mode config visibility
@@ -20161,6 +21606,79 @@ ${'='.repeat(80)}
             });
         }
 
+        // Apply compute budget slider value to form fields
+        function applyComputeBudget(value) {
+            const v = value / 100; // normalize to 0-1
+
+            // Interpolation ranges: [min, max]
+            const ranges = {
+                'num-generations':    [10, 150],
+                'max-parallel-jobs':  [1, 6],
+                'num-islands':        [2, 6],
+                'archive-size':       [15, 50],
+            };
+
+            for (const [id, [min, max]] of Object.entries(ranges)) {
+                const el = document.getElementById(id);
+                if (el) {
+                    const computed = Math.round(min + (max - min) * v);
+                    el.value = computed;
+                }
+            }
+        }
+
+        // Calculate slider position from field value (reverse of applyComputeBudget)
+        // Based on num_generations as the primary indicator
+        function updateSliderFromFields() {
+            const slider = document.getElementById('compute-budget');
+            const numGenEl = document.getElementById('num-generations');
+            if (!slider || !numGenEl) return;
+
+            const value = parseInt(numGenEl.value) || 20;
+            const min = 10, max = 150;
+            // Clamp and calculate slider position
+            const clamped = Math.max(min, Math.min(max, value));
+            const sliderValue = Math.round((clamped - min) / (max - min) * 100);
+            slider.value = sliderValue;
+        }
+
+        // Track if compute budget listeners are attached
+        let computeBudgetListenersAttached = false;
+
+        // Initialize compute budget slider listeners (called when modal opens)
+        function attachComputeBudgetListeners() {
+            if (computeBudgetListenersAttached) return;
+
+            const modal = document.getElementById('new-run-modal');
+            if (!modal) return;
+
+            // Use event delegation on the modal for robustness
+            modal.addEventListener('input', (e) => {
+                const target = e.target;
+                const id = target.id;
+
+                // Slider → fields
+                if (id === 'compute-budget') {
+                    applyComputeBudget(parseInt(target.value));
+                }
+
+                // Fields → slider (reverse sync)
+                if (['num-generations', 'max-parallel-jobs', 'num-islands', 'archive-size'].includes(id)) {
+                    updateSliderFromFields();
+                }
+            });
+
+            // Also handle change events for spinners and blur
+            modal.addEventListener('change', (e) => {
+                const id = e.target.id;
+                if (['num-generations', 'max-parallel-jobs', 'num-islands', 'archive-size'].includes(id)) {
+                    updateSliderFromFields();
+                }
+            });
+
+            computeBudgetListenersAttached = true;
+        }
+
         // Collect form data into nested config structure
         function collectNewRunConfig() {
             const sourceType = document.querySelector('input[name="source-type"]:checked').value;
@@ -20183,6 +21701,12 @@ ${'='.repeat(80)}
                     git_url: document.getElementById('git-url').value,
                     git_branch: document.getElementById('git-branch').value,
                     isolate_workspace: document.getElementById('isolate-workspace').checked,
+                    // Storage & Performance settings (convert UI values to bytes)
+                    embedding_max_files: parseInt(document.getElementById('embedding-max-files').value) || 500,
+                    embedding_max_total_bytes: Math.round((parseFloat(document.getElementById('embedding-max-total-bytes').value) || 2) * 1024 * 1024),
+                    embedding_max_bytes_per_file: Math.round((parseFloat(document.getElementById('embedding-max-bytes-per-file').value) || 500) * 1024),
+                    cleanup_old_generations: document.getElementById('cleanup-old-generations').checked,
+                    cleanup_keep_last_n: parseInt(document.getElementById('cleanup-keep-last-n').value) || 50,
                 },
                 agent: {
                     agentic_mode: document.getElementById('agentic-mode').checked,
@@ -20199,14 +21723,21 @@ ${'='.repeat(80)}
                         eval_prompt: document.getElementById('eval-prompt').value,
                     },
                 },
+                scratchpad: {
+                    enabled: document.getElementById('scratchpad-enabled').checked,
+                    backend: document.getElementById('scratchpad-backend').value,
+                    interval: parseInt(document.getElementById('scratchpad-interval').value) || 5,
+                    max_recommendations: parseInt(document.getElementById('scratchpad-max-recommendations').value) || 5,
+                },
                 run: {
                     run_name: document.getElementById('run-name').value,
                     num_generations: parseInt(document.getElementById('num-generations').value),
                     max_parallel_jobs: parseInt(document.getElementById('max-parallel-jobs').value),
                     num_islands: parseInt(document.getElementById('num-islands').value),
                     archive_size: parseInt(document.getElementById('archive-size').value),
-                    target_score: document.getElementById('target-score').value ? parseFloat(document.getElementById('target-score').value) : null,
+                    max_score: parseFloat(document.getElementById('max-score').value) || 1.0,
                     max_runtime_hours: parseInt(document.getElementById('max-runtime-hours').value),
+                    compute_budget: parseInt(document.getElementById('compute-budget').value),
                 },
                 job: {
                     job_type: 'local',
@@ -20224,6 +21755,15 @@ ${'='.repeat(80)}
                 document.getElementById('git-url').value = cb.git_url || '';
                 document.getElementById('git-branch').value = cb.git_branch || 'main';
                 document.getElementById('isolate-workspace').checked = cb.isolate_workspace !== false;
+                // Storage & Performance settings (convert bytes to UI values)
+                document.getElementById('embedding-max-files').value = cb.embedding_max_files || 500;
+                const totalBytes = cb.embedding_max_total_bytes || 2097152;
+                document.getElementById('embedding-max-total-bytes').value = (totalBytes / (1024 * 1024)).toFixed(1);
+                const perFileBytes = cb.embedding_max_bytes_per_file || 512000;
+                document.getElementById('embedding-max-bytes-per-file').value = Math.round(perFileBytes / 1024);
+                document.getElementById('cleanup-old-generations').checked = cb.cleanup_old_generations || false;
+                document.getElementById('cleanup-keep-last-n').value = cb.cleanup_keep_last_n || 50;
+                toggleCleanupRetention();
             }
             if (config.agent) {
                 const ag = config.agent;
@@ -20251,6 +21791,13 @@ ${'='.repeat(80)}
                     document.getElementById('eval-prompt').value = ev.agentic_config.eval_prompt || '';
                 }
             }
+            if (config.scratchpad) {
+                const sp = config.scratchpad;
+                document.getElementById('scratchpad-enabled').checked = sp.enabled || false;
+                document.getElementById('scratchpad-backend').value = sp.backend || 'codex';
+                document.getElementById('scratchpad-interval').value = sp.interval || 5;
+                document.getElementById('scratchpad-max-recommendations').value = sp.max_recommendations || 5;
+            }
             if (config.run) {
                 const run = config.run;
                 document.getElementById('run-name').value = run.run_name || '';
@@ -20258,8 +21805,11 @@ ${'='.repeat(80)}
                 document.getElementById('max-parallel-jobs').value = run.max_parallel_jobs || 1;
                 document.getElementById('num-islands').value = run.num_islands || 2;
                 document.getElementById('archive-size').value = run.archive_size || 20;
-                document.getElementById('target-score').value = run.target_score || '';
+                document.getElementById('max-score').value = run.max_score || 1;
                 document.getElementById('max-runtime-hours').value = run.max_runtime_hours || 0;
+                if (run.compute_budget !== undefined) {
+                    document.getElementById('compute-budget').value = run.compute_budget;
+                }
             }
         }
 
@@ -20500,6 +22050,8 @@ ${'='.repeat(80)}
                     closeNewRunModal();
                     // Refresh the database list to show the new run
                     await findDatabases(true);
+                    // Auto-navigate to the newly created run
+                    await autoSelectNewRun(data.run_id, data.db_path);
                 } else {
                     showToast('Failed to start run: ' + data.error, 'error');
                     startBtn.disabled = false;
@@ -20507,6 +22059,57 @@ ${'='.repeat(80)}
             } catch (err) {
                 showToast('Failed to start run: ' + err.message, 'error');
                 startBtn.disabled = false;
+            }
+        }
+
+        // Auto-select a newly created run in the Task/Result dropdowns and load it
+        async function autoSelectNewRun(runId, dbPath) {
+            const taskSelect = document.getElementById('task-select');
+            const resultSelect = document.getElementById('result-select');
+
+            // Find the matching database in availableDatabases
+            // The run_id is typically the run name (e.g., "run_001")
+            // The db_path contains the full path
+            let matchingDb = null;
+
+            // Try to find by run_id in the path
+            for (const db of availableDatabases) {
+                if (db.path.includes(runId) || (dbPath && db.path.includes(dbPath.split('/').slice(-2, -1)[0]))) {
+                    matchingDb = db;
+                    break;
+                }
+            }
+
+            // If found, select it
+            if (matchingDb) {
+                const pathParts = matchingDb.path.split('/');
+                if (pathParts.length >= 3) {
+                    const task = pathParts[pathParts.length - 3];
+                    
+                    // Select the task
+                    taskSelect.value = task;
+                    populateResultSelect(task);
+                    
+                    // Select the result
+                    resultSelect.value = matchingDb.path;
+                    
+                    // Load the database
+                    loadDatabase(matchingDb.path);
+                    
+                    showToast('Navigated to new run', 'info');
+                    console.log('[DEBUG] Auto-selected new run:', matchingDb.path);
+                }
+            } else {
+                console.warn('[DEBUG] Could not find new run in database list:', runId);
+                // Fallback: select the first (newest) result if available
+                const firstTask = Object.keys(tasksAndResults)[0];
+                if (firstTask && tasksAndResults[firstTask].length > 0) {
+                    taskSelect.value = firstTask;
+                    populateResultSelect(firstTask);
+                    const firstResult = tasksAndResults[firstTask][0].path;
+                    resultSelect.value = firstResult;
+                    loadDatabase(firstResult);
+                }
             }
         }
 
