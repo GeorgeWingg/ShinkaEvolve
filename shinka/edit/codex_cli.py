@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Optional
@@ -60,6 +62,18 @@ def ensure_codex_available(codex_path: Optional[str] = None) -> Path:
 def _format_extra_config(extra: Dict[str, object]) -> Iterable[str]:
     """Yield CLI `-c key=value` pairs from a dictionary."""
 
+    # Hydra/OmegaConf may hand us a DictConfig; coerce to plain dict so values
+    # are JSON-serializable primitives before formatting.
+    try:
+        from omegaconf import OmegaConf  # type: ignore
+
+        if OmegaConf.is_config(extra):
+            converted = OmegaConf.to_container(extra, resolve=True)
+            if isinstance(converted, dict):
+                extra = converted  # type: ignore[assignment]
+    except Exception:
+        pass
+
     for key, value in extra.items():
         if value is None:
             continue
@@ -86,6 +100,7 @@ def run_codex_task(
     cli_path: Optional[str] = None,  # Alias for codex_path
     resume_session_id: Optional[str] = None,
     session_kind: str = "unknown",
+    registry_workdir: Optional[Path] = None,
     # Metadata params (unused but accepted for API compat with agentic.py)
     parent_id: Optional[str] = None,
     generation: Optional[int] = None,
@@ -134,6 +149,25 @@ def run_codex_task(
         if selection.get("sandbox") and not sandbox:
             selected_sandbox = selection["sandbox"]
             logger.debug(f"Using selected Codex sandbox: {selected_sandbox}")
+        # Allow UI-selected reasoning effort to flow into extra_cli_config
+        # unless the run config already specifies it.
+        effort = selection.get("model_reasoning_effort")
+        if isinstance(effort, str) and effort.strip():
+            if "model_reasoning_effort" not in extra_cli_config:
+                # Preserve OmegaConf containers by resolving to plain dict
+                try:
+                    from omegaconf import OmegaConf  # type: ignore
+
+                    if OmegaConf.is_config(extra_cli_config):
+                        converted = OmegaConf.to_container(extra_cli_config, resolve=True)
+                        extra_cli_config = (
+                            converted if isinstance(converted, dict) else dict(extra_cli_config)
+                        )
+                    else:
+                        extra_cli_config = dict(extra_cli_config)
+                except Exception:
+                    extra_cli_config = dict(extra_cli_config)
+                extra_cli_config["model_reasoning_effort"] = effort.strip()
     except Exception as e:
         logger.debug(f"Could not load Codex selected profile: {e}")
 
@@ -189,7 +223,21 @@ def run_codex_task(
     prompt_parts.append(user_prompt)
     full_prompt = "\n\n".join(prompt_parts)
 
-    cmd.append(full_prompt)
+    # Create temp file for prompt to avoid ARG_MAX limits on macOS (~1MB)
+    # Codex CLI supports '-' placeholder to read prompt from stdin
+    prompt_temp_path = None
+    if full_prompt:
+        try:
+            fd, prompt_temp_path = tempfile.mkstemp(prefix="codex_prompt_", text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(full_prompt)
+        except Exception as e:
+            logger.error(f"Failed to create prompt temp file: {e}")
+            raise CodexExecutionError(f"Failed to create prompt temp file: {e}")
+
+    # Use '-' placeholder to read prompt from stdin (avoids ARG_MAX limits)
+    if prompt_temp_path:
+        cmd.append("-")
 
     start_time = time.monotonic()
     events_emitted = 0
@@ -200,120 +248,148 @@ def run_codex_task(
     model_name = profile or "gpt-4.1-mini"  # Default Codex model (in pricing.py)
     session_id: Optional[str] = None
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    lines = full_prompt.strip().splitlines() if full_prompt else []
-    prompt_preview = lines[0][:160] if lines else ""
-    register_session_process(
-        process.pid,
-        prompt_preview=prompt_preview,
-        workdir=workdir,
-        session_kind=session_kind,
-        parent_id=parent_id,
-        generation=generation,
-        patch_type=patch_type,
-        results_dir=results_dir,
-    )
+    # Open prompt file for piping to stdin
+    prompt_file_handle = None
+    if prompt_temp_path:
+        try:
+            prompt_file_handle = open(prompt_temp_path, 'r', encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Failed to open prompt temp file for reading: {e}")
+            raise CodexExecutionError(f"Failed to open prompt temp file: {e}")
 
     try:
-        if not process.stdout:
-            raise CodexExecutionError("Codex CLI did not provide stdout pipe.")
+        process = subprocess.Popen(
+            cmd,
+            stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
 
-        while True:
-            if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
+        # Close our handle to the file; Popen has its own
+        if prompt_file_handle:
+            prompt_file_handle.close()
+            prompt_file_handle = None
+
+        lines = full_prompt.strip().splitlines() if full_prompt else []
+        prompt_preview = lines[0][:160] if lines else ""
+        register_session_process(
+            process.pid,
+            prompt_preview=prompt_preview,
+            workdir=registry_workdir or workdir,
+            session_kind=session_kind,
+            parent_id=parent_id,
+            generation=generation,
+            patch_type=patch_type,
+            results_dir=results_dir,
+        )
+
+        try:
+            if not process.stdout:
+                raise CodexExecutionError("Codex CLI did not provide stdout pipe.")
+
+            while True:
+                if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
+                    process.kill()
+                    raise CodexExecutionError(
+                        f"Codex task exceeded {max_seconds}s timeout."
+                    )
+
+                line = process.stdout.readline()
+                if not line:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                    continue
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+                    raise CodexExecutionError(
+                        f"Failed to parse Codex event: {line}"
+                    ) from exc
+
+                events_emitted += 1
+                if max_events and events_emitted > max_events:
+                    process.kill()
+                    raise CodexExecutionError(
+                        "Codex emitted more events than allowed (max_events)."
+                    )
+
+                if isinstance(event, dict):
+                    extracted_sid = _extract_session_id(event)
+                    if extracted_sid:
+                        session_id = extracted_sid
+                        update_session_process(process.pid, session_id=extracted_sid)
+
+                    # Track output content for token estimation
+                    content = (
+                        event.get("content")
+                        or event.get("text")
+                        or ""
+                    )
+                    # Also check nested message content
+                    msg = event.get("message")
+                    if isinstance(msg, dict):
+                        msg_content = msg.get("content")
+                        if isinstance(msg_content, str):
+                            content = msg_content
+                        elif isinstance(msg_content, list):
+                            # Handle content blocks
+                            for block in msg_content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    content += block.get("text", "")
+
+                    if isinstance(content, str) and content:
+                        estimated_output_tokens += len(content) // 4
+
+                yield event
+
+            # Emit usage event at session end
+            total_tokens = estimated_input_tokens + estimated_output_tokens
+            yield {
+                "type": "usage",
+                "session_id": session_id,
+                "usage": {
+                    "input_tokens": estimated_input_tokens,
+                    "output_tokens": estimated_output_tokens,
+                    "total_tokens": total_tokens,
+                    "total_cost_usd": calculate_cost(
+                        model_name,
+                        estimated_input_tokens,
+                        estimated_output_tokens,
+                        "codex",
+                    ),
+                },
+                "model": model_name,
+            }
+
+            returncode = process.wait(timeout=1)
+            if returncode != 0:
+                stderr_out = process.stderr.read() if process.stderr else ""
+                raise CodexExecutionError(
+                    f"Codex CLI exited with status {returncode}: {stderr_out.strip()}"
+                )
+        finally:
+            if process.poll() is None:
                 process.kill()
-                raise CodexExecutionError(
-                    f"Codex task exceeded {max_seconds}s timeout."
-                )
-
-            line = process.stdout.readline()
-            if not line:
-                if process.poll() is not None:
-                    break
-                time.sleep(0.05)
-                continue
-
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as exc:  # pragma: no cover - defensive
-                raise CodexExecutionError(
-                    f"Failed to parse Codex event: {line}"
-                ) from exc
-
-            events_emitted += 1
-            if max_events and events_emitted > max_events:
-                process.kill()
-                raise CodexExecutionError(
-                    "Codex emitted more events than allowed (max_events)."
-                )
-
-            if isinstance(event, dict):
-                extracted_sid = _extract_session_id(event)
-                if extracted_sid:
-                    session_id = extracted_sid
-                    update_session_process(process.pid, session_id=extracted_sid)
-
-                # Track output content for token estimation
-                content = (
-                    event.get("content")
-                    or event.get("text")
-                    or ""
-                )
-                # Also check nested message content
-                msg = event.get("message")
-                if isinstance(msg, dict):
-                    msg_content = msg.get("content")
-                    if isinstance(msg_content, str):
-                        content = msg_content
-                    elif isinstance(msg_content, list):
-                        # Handle content blocks
-                        for block in msg_content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                content += block.get("text", "")
-
-                if isinstance(content, str) and content:
-                    estimated_output_tokens += len(content) // 4
-
-            yield event
-
-        # Emit usage event at session end
-        total_tokens = estimated_input_tokens + estimated_output_tokens
-        yield {
-            "type": "usage",
-            "session_id": session_id,
-            "usage": {
-                "input_tokens": estimated_input_tokens,
-                "output_tokens": estimated_output_tokens,
-                "total_tokens": total_tokens,
-                "total_cost_usd": calculate_cost(
-                    model_name,
-                    estimated_input_tokens,
-                    estimated_output_tokens,
-                    "codex",
-                ),
-            },
-            "model": model_name,
-        }
-
-        returncode = process.wait(timeout=1)
-        if returncode != 0:
-            stderr_out = process.stderr.read() if process.stderr else ""
-            raise CodexExecutionError(
-                f"Codex CLI exited with status {returncode}: {stderr_out.strip()}"
-            )
+            remove_session_process(process.pid)
     finally:
-        if process.poll() is None:
-            process.kill()
-        remove_session_process(process.pid)
+        # Clean up temp file
+        if prompt_file_handle:
+            try:
+                prompt_file_handle.close()
+            except Exception:
+                pass
+        if prompt_temp_path and os.path.exists(prompt_temp_path):
+            try:
+                os.remove(prompt_temp_path)
+            except Exception:
+                pass
 
 
 def _extract_session_id(event: Dict[str, object]) -> Optional[str]:

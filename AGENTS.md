@@ -1,34 +1,10 @@
 # Repository Guidelines
-- OpenAI API key policy: the `OPENAI_API_KEY` present in `.env` is **only for embeddings** (e.g., `text-embedding-3-small`). Do **not** use it for LLM inference. All code-generation or evaluation loops must run through Codex CLI or Gemini CLI using their own subscriptions/profiles. If a config references `gpt-*` or other OpenAI chat models, replace it with Codex/Gemini equivalents before launching.
 - Keep working/iterating until every ExecPlan requirement is satisfied; only pause for user input if you hit a truly blocking issue with no workaround.
 - For any task that involves an ExecPlan, first read `PLANS.md` and follow its guidelines exactly when creating, updating, or executing the plan.
 
-# ⛔ CRITICAL: Git is OFF-LIMITS
+# Git Caution
 
-**NEVER run any git commands that modify the working tree or undo changes.** This includes but is not limited to:
-
-- `git checkout` — **ABSOLUTELY FORBIDDEN**. This has caused catastrophic loss of work.
-- `git reset`
-- `git revert`
-- `git restore`
-- `git clean`
-- `git stash`
-- `git merge`
-- `git rebase`
-- `git cherry-pick`
-
-**Safe git commands (read-only, informational):**
-- `git status` — OK
-- `git log` — OK
-- `git diff` — OK (without `--cached` followed by checkout)
-- `git branch` — OK (listing only)
-- `git show` — OK
-
-**If you need to undo a change:** Ask the user. Do NOT attempt to fix it yourself with git. The user has their own git workflow and you have already destroyed work by running `git checkout`.
-
-**If you think a file is broken:** Edit it manually with the proper edit tools. Do NOT use git to restore it.
-
-**No exceptions. No "just this once." No "it should be safe." NEVER TOUCH GIT FOR MODIFICATIONS.**
+Be careful with git commands that modify the working tree. Prefer read-only commands (`git status`, `git log`, `git diff`, `git show`) and ask before running destructive operations like `git reset --hard`, `git checkout <file>`, or `git clean`. The user manages their own git workflow.
 
 # ExecPlans
 - When writing complex features or significant refactors, use an ExecPlan (as described in PLANS.md) from design to implementation.
@@ -106,3 +82,110 @@
 - If you want to try heuristic or gradient-based refinements, do it offline (outside this repo) and commit the resulting `circleXX_solution.npz` snapshot only after you can reproduce and validate it. That keeps the shared repo lean and prevents runaway experiments from cooking someone else’s laptop.
 - Whenever you add a search heuristic, keep it deterministic (seed your RNG) so evaluator runs remain reproducible; use `compute_max_radii` to validate each candidate before reporting.
 - If you introduce helper utilities (e.g., force-field relaxations or pairwise adjustments), place them inside `examples/circle_packing/helpers/` and update `init_support_dir` accordingly so agentic runs can mutate those files alongside `main.py`.
+# Visual Engineering Workflow (Nano Banana)
+
+You have been upgraded with the **Visual Engineering Loop**. You are now responsible for the end-to-end quality of visual assets.
+
+## 1. The Golden Rule: "Context First"
+Before generating ANY asset, you **MUST** read `docs/ART_DIRECTION.md`.
+*   **Missing?** If `docs/ART_DIRECTION.md` does not exist, you must CREATE it.
+    *   **Research:** Read `tailwind.config.js`, `*.css`, or `index.html` to infer the project's font, colors, and "vibe".
+    *   **Synthesize:** Write the Art Direction file defining the visual pillar (e.g., "Corporate Memphis", "Cyberpunk", "Retro Pixel").
+
+## 2. The Decision Tree (SVG vs. Image)
+Do not default to image generation. Choose the correct medium:
+*   **UI Icons, Logos, Simple Shapes:**
+    *   **Action:** Generate **Raw SVG Code**.
+    *   **Why:** Infinite scaling, small file size, editable via CSS.
+    *   **Do NOT:** Use Nano Banana for simple icons (unless a specific painted style is required).
+*   **Complex Sprites, Backgrounds, Textures:**
+    *   **Action:** Use **Nano Banana**.
+    *   **Prompting:** You MUST append the project's specific style suffix (found in `ART_DIRECTION.md`).
+    *   **Constraint:** You must prompt for `...isolated on solid bright green background` to allow for clean removal.
+
+## 3. The Processing Loop
+Never use raw `nanobanana-output` files directly in production.
+
+### Quick Reference Commands
+```bash
+# Check status of nanobanana-output
+uv run python process_assets.py --status
+
+# Process all new images
+uv run python process_assets.py
+
+# Process AND archive originals (recommended)
+uv run python process_assets.py --archive
+
+# Process only files not yet in manifest
+uv run python process_assets.py --only-new
+
+# Organize old files into dated archive folders
+uv run python scripts/organize_nanobanana.py --dry-run  # Preview
+uv run python scripts/organize_nanobanana.py            # Archive files > 24h old
+uv run python scripts/organize_nanobanana.py --by-date  # Organize all by date
+```
+
+### Workflow Steps
+1.  **Generate:** Run the Nano Banana tool (files land in `nanobanana-output/`).
+2.  **Process:** Run `uv run python process_assets.py --archive`
+    *   Removes the green screen (using AI or Chroma Key) and auto-crops.
+    *   Creates a `verify_{filename}.html` in `assets/processed/`.
+    *   Archives the original to `nanobanana-output/.archive/{date}/`.
+    *   Tracks processed files in `.processed.json` manifest.
+
+### Directory Structure
+```
+nanobanana-output/
+├── .archive/              # Processed originals (organized by date)
+│   ├── 2025-12-14/
+│   └── 2025-12-15/
+├── .processed.json        # Manifest tracking processed files
+└── *.png                  # New/unprocessed files
+
+assets/processed/          # Final processed assets
+├── *.png                  # Background-removed, cropped images
+└── verify_*.html          # Verification sheets
+```
+
+### Keeping Things Clean
+The `nanobanana-output/` directory is **gitignored**. To prevent clutter:
+- Use `--archive` flag when processing to automatically move originals
+- Run `uv run python scripts/organize_nanobanana.py` periodically to archive old files
+- Check status anytime with `uv run python process_assets.py --status`
+
+## 4. Verification (The "Anti-Glued-On" Check)
+You must verify the asset does not look "fake" or "glued on."
+1.  **Inspect:** Use `run_shell_command` to open the verification sheet (or just trust the process if in a rush, but better to verify).
+    *   *Best Practice:* Open the actual app using `navigate_page` (if running locally).
+2.  **Critique:**
+    *   Are the edges jagged? -> **Reject & Retry** (Adjust prompt for cleaner separation).
+    *   Is the lighting wrong? -> **Reject & Retry** (Update prompt lighting direction).
+    *   Does it fit the CSS? -> **Check:** Read the component code (e.g., `Button.tsx`). Ensure the CSS `aspect-ratio` matches the asset.
+
+## 5. Integration
+*   Move the finalized file from `assets/processed/` to its final home (e.g., `public/images/`).
+*   Update the code to reference it.
+
+## 6. Mandatory Planning Step
+**CRITICAL:** When creating an ExecPlan for any task involving visual design or UI changes:
+*   You **MUST** include a "Verification" phase in the plan.
+*   This phase **MUST** explicitly state:
+    1. "Capture screenshot of the running UI via DevTools (`take_screenshot`)."
+    2. "**View** the screenshot using the `read_file` tool to verify visual integration."
+*   Do not mark the plan as complete until you have performed this runtime verification.
+
+## 7. Continuous Iteration to Enterprise Standard
+**Do not settle for "good enough".** You are an expert engineer.
+*   **The Loop:** Design -> Implement -> **Verify (Screenshot + Read File)** -> **Critique** -> **Refine** -> Repeat.
+*   **Self-Correction:** If the screenshot (viewed via `read_file`) shows misalignment, poor contrast, or "glued-on" assets, you **MUST** iterate immediately. Do not ask for permission to fix obvious flaws.
+*   **Standard:** Aim for "High Enterprise Standard" — pixel-perfect alignment, consistent spacing, and professional polish.
+*   **Asset Refinement:** If an asset (image/icon) doesn't fit the vibe, **regenerate it** with adjusted prompts until it does.
+
+## 8. Modal Banner Design
+When creating or modifying modals with decorative banners/headers, refer to `docs/ART_DIRECTION.md` Section 13 for:
+- **Thin banner technique**: Prompt for content in thin strip with white padding, then auto-trim
+- **Aspect ratio**: ~8:1 (e.g., 1584x196) works well for 90px modal headers
+- **Close button**: Fixed `top: 30px` (visual center), not `top: 50%` (mathematical center)
+- **Fish style**: Golden glow/sparkles = evolutionary; avoid fire/flames
+- **Consistency**: Edit existing banners rather than generating new ones from scratch

@@ -183,7 +183,7 @@ if __name__ == "__main__":
         "--results_dir",
         type=str,
         default="results",
-        help="Dir to save results (metrics.json, correct.json, extra.npz)",
+        help="Dir to save results (metrics.json with consolidated schema, extra.npz)",
     )
     parsed_args = parser.parse_args()
     main(parsed_args.program_path, parsed_args.results_dir)

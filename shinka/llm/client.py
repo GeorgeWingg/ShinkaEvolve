@@ -11,6 +11,7 @@ from .models.pricing import (
     OPENAI_MODELS,
     DEEPSEEK_MODELS,
     GEMINI_MODELS,
+    OPENROUTER_MODELS,
 )
 
 env_path = Path(__file__).parent.parent.parent / ".env"
@@ -78,6 +79,54 @@ def get_client_llm(model_name: str, structured_output: bool = False) -> Tuple[An
                 client,
                 mode=instructor.Mode.GEMINI_JSON,
             )
+    elif model_name in OPENROUTER_MODELS.keys() or model_name.startswith("openrouter/"):
+        # OpenRouter is OpenAI-compatible
+        client = openai.OpenAI(
+            api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={"HTTP-Referer": "https://shinka.ai"},
+        )
+        # Strip the openrouter/ prefix for the actual API call
+        if model_name.startswith("openrouter/"):
+            model_name = model_name.replace("openrouter/", "", 1)
+        if structured_output:
+            client = instructor.from_openai(client, mode=instructor.Mode.TOOLS_STRICT)
+    elif model_name.startswith("custom/"):
+        # Custom provider: custom/<provider_id>/<model>
+        from shinka.tools.credentials import get_custom_providers
+
+        parts = model_name.split("/", 2)
+        if len(parts) < 3:
+            raise ValueError(f"Invalid custom model format: {model_name}. Expected custom/<provider_id>/<model>")
+
+        provider_id = parts[1]
+        actual_model = parts[2]
+
+        providers = get_custom_providers()
+        if provider_id not in providers:
+            raise ValueError(f"Custom provider '{provider_id}' not configured")
+
+        config = providers[provider_id]
+        base_url = config.get("base_url", "")
+        if not base_url:
+            raise ValueError(f"Custom provider '{provider_id}' has no base_url configured")
+
+        # Get API key from env var (may be empty for local endpoints)
+        env_var = config.get("env_var", f"CUSTOM_{provider_id.upper()}_API_KEY")
+        api_key = os.environ.get(env_var, "")
+
+        # Local endpoints (localhost/127.0.0.1) often don't need keys
+        is_local = "localhost" in base_url or "127.0.0.1" in base_url
+        if not api_key and not is_local:
+            raise ValueError(f"API key not set for custom provider '{provider_id}' ({env_var})")
+
+        client = openai.OpenAI(
+            api_key=api_key or "not-needed",
+            base_url=base_url,
+        )
+        model_name = actual_model
+        if structured_output:
+            client = instructor.from_openai(client, mode=instructor.Mode.TOOLS_STRICT)
     else:
         raise ValueError(f"Model {model_name} not supported.")
 

@@ -198,12 +198,13 @@ def test_gemini_prompt_combination(mock_subprocess, mock_ensure_gemini, tmp_path
             extra_cli_config={}
         ))
 
-    # Verify user prompt is the positional arg (system prompt NOT concatenated)
+    # Verify user prompt is appended as positional arg (one-shot mode)
     call_args = mock_subprocess.call_args[0][0]
-    assert call_args[-1] == user_prompt, "User prompt should be the final positional arg"
+    assert user_prompt in call_args, "User prompt should be passed as positional CLI arg by default"
+    call_kwargs = mock_subprocess.call_args[1]
+    assert call_kwargs.get("stdin") is subprocess.DEVNULL
 
     # Verify GEMINI_SYSTEM_MD env var is set to point to system prompt file
-    call_kwargs = mock_subprocess.call_args[1]
     env = call_kwargs.get("env", {})
     assert "GEMINI_SYSTEM_MD" in env, "GEMINI_SYSTEM_MD should be set for system prompts"
 

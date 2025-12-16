@@ -161,8 +161,6 @@ def _find_similar_lines(
     search_line: str, original_text: str, max_suggestions: int = 3
 ) -> List[Tuple[str, int]]:
     """Find similar lines in the original text for suggestions."""
-    import difflib
-
     search_line_clean = search_line.strip()
     if not search_line_clean:
         return []

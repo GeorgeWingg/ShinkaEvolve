@@ -23,13 +23,25 @@ import time
 import urllib.parse
 import webbrowser
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 from shinka.database import DatabaseConfig, ProgramDatabase
-from shinka.tools.codex_session_registry import list_session_processes
+from shinka.tools.codex_session_registry import (
+    list_session_processes,
+    terminate_session_process,
+)
 from shinka.webui.credential_checker import CredentialChecker
+from shinka.webui.credential_tester import CredentialTester
 from shinka.webui.presets import PresetManager
-from shinka.webui.git_worktree import GitWorktreeManager
+from shinka.tools.credentials import get_api_key
+from shinka.webui.git_worktree import (
+    GitWorktreeManager,
+    EvolutionGitManager,
+    is_git_repo,
+    is_dirty_repo,
+    get_current_ref,
+    resolve_local_isolation_strategy,
+)
 from shinka.webui.run_config import UIRunConfig, RunConfigBuilder, flatten_nested_config
 from shinka.webui.cli_profiles import (
     get_cli_config_manager,
@@ -39,9 +51,27 @@ from shinka.webui.cli_profiles import (
     CodexProfileManager,
     GeminiConfigManager,
 )
+from shinka.webui.plan_sessions import start_plan_session, append_plan_message
 
 # We'll use a simple text-to-PDF approach instead of complex dependencies
 WEASYPRINT_AVAILABLE = False
+
+
+def get_readonly_connection(db_path: str) -> sqlite3.Connection:
+    """
+    Create a read-only SQLite connection with proper settings.
+
+    Uses WAL mode for better concurrent read performance and sets
+    appropriate timeouts for handling locked databases.
+    """
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrent reads
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    return conn
+
 
 DEFAULT_PORT = 8000
 CACHE_EXPIRATION_SECONDS = 5  # Cache data for 5 seconds
@@ -70,6 +100,46 @@ LARGE_NESTED_FIELDS = {
     "agentic_evaluator": {"commands_run", "events_preview", "stdout_log", "stderr_log"},
 }
 
+# Fields inside nested arrays within dicts (like ensemble_evaluation.evaluators[])
+LARGE_NESTED_ARRAY_FIELDS = {
+    "ensemble_evaluation": {
+        "array_key": "evaluators",
+        "filter_fields": {"commands_run", "events_preview", "stdout_log", "stderr_log"},
+    },
+}
+
+
+def pid_matches_run(pid: int, run_dir: str) -> bool:
+    """Heuristic check that a PID still corresponds to a given run directory.
+
+    This prevents stale `shinka.pid` files from keeping runs marked as "running"
+    after the OS has reused the PID for an unrelated process.
+    """
+    if not pid or pid <= 0 or not run_dir:
+        return False
+
+    try:
+        run_dir_abs = os.path.abspath(run_dir).rstrip(os.sep)
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+        )
+        cmd = (result.stdout or "").strip()
+        if not cmd:
+            return False
+
+        if run_dir_abs in cmd:
+            return True
+
+        basename = os.path.basename(run_dir_abs)
+        if basename and basename in cmd and "shinka" in cmd:
+            return True
+    except Exception:
+        return False
+
+    return False
+
 
 def filter_large_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -97,6 +167,35 @@ def filter_large_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
                         nested_filtered[f"_{nested_key}_size"] = len(nested_value)
                     elif isinstance(nested_value, dict):
                         nested_filtered[f"_{nested_key}_size"] = len(json.dumps(nested_value)) if nested_value else 0
+                else:
+                    nested_filtered[nested_key] = nested_value
+            filtered[key] = nested_filtered
+        elif key in LARGE_NESTED_ARRAY_FIELDS and isinstance(value, dict):
+            # Filter nested dict containing array (e.g., ensemble_evaluation.evaluators[])
+            config = LARGE_NESTED_ARRAY_FIELDS[key]
+            array_key = config["array_key"]
+            filter_fields = config["filter_fields"]
+
+            nested_filtered = {}
+            for nested_key, nested_value in value.items():
+                if nested_key == array_key and isinstance(nested_value, list):
+                    # Filter each item in the array
+                    filtered_array = []
+                    for item in nested_value:
+                        if isinstance(item, dict):
+                            filtered_item = {}
+                            for item_key, item_value in item.items():
+                                if item_key in filter_fields:
+                                    if isinstance(item_value, (list, str)):
+                                        filtered_item[f"_{item_key}_size"] = len(item_value)
+                                    elif isinstance(item_value, dict):
+                                        filtered_item[f"_{item_key}_size"] = len(json.dumps(item_value)) if item_value else 0
+                                else:
+                                    filtered_item[item_key] = item_value
+                            filtered_array.append(filtered_item)
+                        else:
+                            filtered_array.append(item)
+                    nested_filtered[nested_key] = filtered_array
                 else:
                     nested_filtered[nested_key] = nested_value
             filtered[key] = nested_filtered
@@ -164,6 +263,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/claude_status":
             return self.handle_claude_status()
 
+        if path == "/api/jules_status":
+            return self.handle_jules_status()
+
         if path == "/api/codex_usage":
             return self.handle_codex_usage()
 
@@ -173,11 +275,20 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/credentials":
             return self.handle_credentials_get()
 
+        if path == "/api/custom_providers":
+            return self.handle_custom_providers_get()
+
         if path == "/api/evolution_runs":
             return self.handle_evolution_runs()
 
         if path == "/api/active_jobs" and "db_path" in query:
             return self.handle_active_jobs(query)
+
+        if path == "/api/bandit_posteriors" and "db_path" in query:
+            return self.handle_bandit_posteriors(query)
+
+        if path == "/api/bandit_history":
+            return self.handle_bandit_history()
 
         if path == "/api/session_state" and "session_id" in query:
             return self.handle_session_state(query)
@@ -202,6 +313,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/folder_picker_native":
             return self.handle_folder_picker_native(query)
 
+        if path == "/api/local_probe":
+            return self.handle_local_probe(query)
+
         # CLI Config endpoints
         if path.startswith("/api/cli_config/"):
             parts = path.split("/")
@@ -223,6 +337,10 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/export_patch" and "db_path" in query and "program_id" in query:
             return self.handle_export_patch(query)
+
+        # Download exported git repos
+        if path.startswith("/download/exports/") and "db_path" in query:
+            return self.handle_download_export(path, query)
 
         if path == "/":
             print("[SERVER] Root path requested, serving viz_tree.html")
@@ -246,6 +364,16 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/credentials":
             return self.handle_credentials_post()
 
+        if path == "/api/credentials/test":
+            return self.handle_credentials_test()
+
+        if path == "/api/custom_providers":
+            return self.handle_custom_providers_post()
+
+        if path.startswith("/api/custom_providers/") and len(path.split("/")) == 4:
+            provider_id = path.split("/")[3]
+            return self.handle_custom_provider_delete(provider_id)
+
         # New Run feature endpoints
         if path == "/api/evolution_run/start":
             return self.handle_evolution_run_start()
@@ -265,6 +393,25 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/git/prepare":
             return self.handle_git_prepare()
+
+        if path == "/api/bandit_history/clear":
+            return self.handle_bandit_history_clear()
+
+        # Plan-with-AI endpoints (New Run modal)
+        if path == "/api/plan_session/start":
+            return self.handle_plan_session_start()
+
+        if path == "/api/plan_session/message":
+            return self.handle_plan_session_message()
+
+        if path == "/api/node/provision_worktree":
+            return self.handle_provision_worktree()
+
+        if path == "/api/node/run_recorded_command":
+            return self.handle_run_recorded_command()
+
+        if path == "/api/run/export_git":
+            return self.handle_export_git_repo()
 
         # CLI Config endpoints
         if path.startswith("/api/cli_config/"):
@@ -405,8 +552,20 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             run_id = data.get("run_id")
             run_dir = data.get("run_dir")
+            pid = data.get("pid")
 
-            print(f"[SERVER] Stop request for run_id={run_id}, run_dir={run_dir}")
+            print(f"[SERVER] Stop request for run_id={run_id}, run_dir={run_dir}, pid={pid}")
+
+            # Back-compat: older clients only send pid. Try to infer the run_dir from
+            # the session registry so we don't kill unrelated processes.
+            if not run_dir and pid:
+                try:
+                    for session in list_session_processes():
+                        if session.get("pid") == pid and session.get("results_dir"):
+                            run_dir = session["results_dir"]
+                            break
+                except Exception:
+                    run_dir = None
 
             if not run_dir:
                 self.send_json_response({"ok": False, "error": "No run_dir provided"})
@@ -415,47 +574,117 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Resolve the path
             run_path = os.path.abspath(run_dir)
             killed_count = 0
+            killed_sessions = 0
+            killed_pids: set[int] = set()
 
-            # Kill any running processes for this run
-            # Search for processes with this run's results_dir in the command line
-            try:
-                result = subprocess.run(
-                    ["pgrep", "-f", run_path],
-                    capture_output=True,
-                    text=True
-                )
-                if result.stdout.strip():
-                    pids = result.stdout.strip().split('\n')
-                    for pid in pids:
-                        try:
-                            pid_int = int(pid)
-                            # Don't kill ourselves
-                            if pid_int == os.getpid():
-                                continue
-                            print(f"[SERVER] Killing process {pid_int} for run {run_id}")
-                            os.kill(pid_int, signal.SIGTERM)
-                            killed_count += 1
-                        except (ValueError, ProcessLookupError, PermissionError) as e:
-                            print(f"[SERVER] Could not kill PID {pid}: {e}")
-            except Exception as e:
-                print(f"[SERVER] Error checking for running processes: {e}")
+            def _kill_pid(pid_int: int, reason: str) -> None:
+                nonlocal killed_count
+                if not pid_int or pid_int in killed_pids or pid_int == os.getpid():
+                    return
+                try:
+                    print(f"[SERVER] Killing process {pid_int} ({reason}) for run {run_id}")
+                    os.kill(pid_int, signal.SIGTERM)
+                    killed_pids.add(pid_int)
+                    killed_count += 1
+                except (ValueError, ProcessLookupError, PermissionError, OSError) as e:
+                    print(f"[SERVER] Could not kill PID {pid_int}: {e}")
 
-            # Also check shinka.pid file
+            # 1) Prefer killing the main runner PID from shinka.pid if it's valid.
             pid_file = os.path.join(run_path, "shinka.pid")
             if os.path.exists(pid_file):
                 try:
                     with open(pid_file, "r") as f:
-                        pid = int(f.read().strip())
-                    if pid != os.getpid():
-                        os.kill(pid, signal.SIGTERM)
-                        print(f"[SERVER] Killed process from shinka.pid: {pid}")
-                        killed_count += 1
-                except (ValueError, ProcessLookupError, PermissionError) as e:
-                    print(f"[SERVER] Could not kill PID from shinka.pid: {e}")
+                        pid_from_file = int(f.read().strip())
+                    if pid_matches_run(pid_from_file, run_path):
+                        _kill_pid(pid_from_file, "shinka.pid")
+                except Exception as e:
+                    print(f"[SERVER] Could not read/kill PID from shinka.pid: {e}")
+
+            # 2) Kill any agentic CLI sessions registered for this run.
+            try:
+                registry_sessions = list_session_processes()
+                run_dir_normalized = os.path.normpath(run_path)
+                workspace_root = os.path.dirname(self.search_root)
+                if os.path.basename(self.search_root) != "results":
+                    workspace_root = self.search_root
+
+                for session in registry_sessions:
+                    sess_pid = session.get("pid")
+                    if not isinstance(sess_pid, int):
+                        continue
+
+                    results_dir = session.get("results_dir")
+                    workdir = session.get("workdir", "") or ""
+
+                    belongs_to_run = False
+                    if results_dir:
+                        try:
+                            results_dir_abs = (
+                                os.path.normpath(results_dir)
+                                if os.path.isabs(results_dir)
+                                else os.path.normpath(os.path.join(workspace_root, results_dir))
+                            )
+                            if results_dir_abs == run_dir_normalized:
+                                belongs_to_run = True
+                        except Exception:
+                            pass
+
+                    if not belongs_to_run and run_dir_normalized in workdir:
+                        belongs_to_run = True
+
+                    if belongs_to_run:
+                        try:
+                            terminate_session_process(sess_pid)
+                        except Exception:
+                            # Fallback to raw kill if registry helper fails
+                            _kill_pid(sess_pid, "agentic session")
+                        else:
+                            killed_pids.add(sess_pid)
+                            killed_count += 1
+                        killed_sessions += 1
+            except Exception as e:
+                print(f"[SERVER] Error stopping agentic sessions: {e}")
+
+            # 3) If a pid was explicitly provided, try to kill it as well.
+            if pid:
+                try:
+                    pid_int = int(pid)
+                    if pid_matches_run(pid_int, run_path):
+                        _kill_pid(pid_int, "request pid")
+                except Exception:
+                    pass
+
+            # 4) Fallback: scan process table for anything referencing run_path.
+            try:
+                ps_result = subprocess.run(
+                    ["ps", "ax", "-o", "pid=,command="],
+                    capture_output=True,
+                    text=True,
+                )
+                for line in (ps_result.stdout or "").splitlines():
+                    if run_path in line:
+                        try:
+                            pid_str = line.strip().split(None, 1)[0]
+                            pid_int = int(pid_str)
+                            _kill_pid(pid_int, "ps scan")
+                        except Exception:
+                            continue
+            except Exception as e:
+                print(f"[SERVER] Error scanning processes: {e}")
+
+            # 5) Best-effort clear of active_jobs.json so UI stops showing stale jobs.
+            active_jobs_path = os.path.join(run_path, "active_jobs.json")
+            if os.path.exists(active_jobs_path):
+                try:
+                    with open(active_jobs_path, "w") as f:
+                        json.dump([], f)
+                except Exception:
+                    pass
 
             self.send_json_response({
                 "ok": True,
                 "killed_processes": killed_count,
+                "killed_agentic_sessions": killed_sessions,
                 "message": f"Stopped {killed_count} process(es)" if killed_count > 0 else "No running processes found"
             })
             print(f"[SERVER] Successfully stopped run: {run_path} (killed {killed_count} processes)")
@@ -471,21 +700,193 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         print("[SERVER] Received request for backend bandit status")
         try:
             from shinka.tools.auth_status import get_authenticated_backends_summary
+
             summary = get_authenticated_backends_summary()
+            available = summary.get("available", [])
+
+            # All authenticated backends are bandit-eligible (including Jules)
+            bandit_eligible = available
+
             response = {
-                "available_backends": summary.get("available", []),
+                "available_backends": available,
                 "unavailable_backends": summary.get("unavailable", []),
                 "backends": summary.get("details", {}),
-                "bandit_active": False,  # Static endpoint; runner would set this
+                "bandit_eligible": bandit_eligible,
+                "bandit_ready": len(bandit_eligible) >= 2,  # Need at least 2 for bandit
+                "bandit_active": False,  # Use /api/bandit_posteriors for run-specific data
             }
             self.send_json_response(response)
         except Exception as e:
             print(f"[SERVER] Error getting backend bandit status: {e}")
             self.send_json_response({
                 "available_backends": [],
-                "unavailable_backends": ["codex", "gemini", "claude", "shinka"],
+                "unavailable_backends": ["codex", "gemini", "claude", "shinka", "jules"],
                 "backends": {},
+                "bandit_eligible": [],
+                "bandit_ready": False,
                 "bandit_active": False,
+                "error": str(e),
+            })
+
+    def handle_bandit_posteriors(self, query: Dict[str, Any]):
+        """Return bandit posteriors for a specific run."""
+        print("[SERVER] Received request for bandit posteriors")
+        db_path = query.get("db_path", [""])[0]
+        if not db_path:
+             self.send_json_response({"bandit_active": False, "error": "No db_path provided"})
+             return
+
+        try:
+            # Resolve the db_path to get the run directory
+            abs_db_path = self._resolve_db_path(db_path)
+            run_dir = os.path.dirname(abs_db_path)
+            
+            # Option 1: Check for live bandit_state.json
+            bandit_state_path = os.path.join(run_dir, "bandit_state.json")
+            if os.path.exists(bandit_state_path):
+                try:
+                    with open(bandit_state_path, 'r') as f:
+                        state = json.load(f)
+                    self.send_json_response({
+                        "bandit_active": True,
+                        "available_backends": state.get("available_backends", []),
+                        "posteriors": state.get("posteriors", {}),
+                        "stats": state.get("per_backend_stats", {}),
+                        "total_pulls": state.get("total_pulls", 0),
+                    })
+                    return
+                except Exception as e:
+                    print(f"[SERVER] Error reading bandit_state.json: {e}")
+
+            # Option 2: Compute from database metadata
+            if os.path.exists(abs_db_path):
+                posteriors = self._compute_posteriors_from_db(abs_db_path)
+                self.send_json_response(posteriors)
+                return
+
+            self.send_json_response({
+                "bandit_active": False,
+                "posteriors": {},
+                "error": "No bandit data available"
+            })
+
+        except Exception as e:
+            print(f"[SERVER] Error getting bandit posteriors: {e}")
+            self.send_json_response({
+                "bandit_active": False,
+                "error": str(e)
+            })
+
+    def _compute_posteriors_from_db(self, db_path: str) -> Dict[str, Any]:
+        """Compute bandit posteriors from program metadata in database."""
+        from shinka.llm.backend_bandit import BackendBandit, BackendBanditConfig
+
+        try:
+            conn = get_readonly_connection(db_path)
+            cursor = conn.cursor()
+
+            # Get all programs with agent_backend metadata
+            cursor.execute("""
+                SELECT id, metadata, combined_score, correct, parent_id
+                FROM programs
+                WHERE metadata LIKE '%agent_backend%'
+                ORDER BY generation ASC
+            """)
+
+            programs = cursor.fetchall()
+            conn.close()
+
+            if not programs:
+                return {
+                    "bandit_active": False,
+                    "posteriors": {},
+                    "message": "No bandit data in database"
+                }
+
+            # Create a fresh bandit and replay updates
+            bandit = BackendBandit(config=BackendBanditConfig())
+
+            backend_counts = {}
+            for prog_id, metadata_json, score, correct, parent_id in programs:
+                try:
+                    metadata = json.loads(metadata_json) if metadata_json else {}
+                    backend = metadata.get("agent_backend")
+                    if not backend:
+                        continue
+
+                    backend_counts[backend] = backend_counts.get(backend, 0) + 1
+
+                    # Get parent score for baseline
+                    baseline = None
+                    if parent_id:
+                        conn2 = get_readonly_connection(db_path)
+                        cursor2 = conn2.cursor()
+                        cursor2.execute("SELECT combined_score FROM programs WHERE id = ?", (parent_id,))
+                        parent_row = cursor2.fetchone()
+                        if parent_row:
+                            baseline = parent_row[0]
+                        conn2.close()
+
+                    reward = score if correct else None
+                    bandit.update(backend, reward=reward, baseline=baseline)
+                except Exception:
+                    continue
+
+            summary = bandit.get_summary()
+            return {
+                "bandit_active": True,
+                "available_backends": list(backend_counts.keys()),
+                "posteriors": summary["posteriors"],
+                "stats": summary["per_backend_stats"],
+                "total_pulls": summary["total_pulls"],
+                "reconstructed": True,
+            }
+
+        except Exception as e:
+            return {
+                "bandit_active": False,
+                "error": f"Failed to compute posteriors: {e}"
+            }
+
+    def handle_bandit_history(self):
+        """Return global bandit history for cross-session visualization."""
+        print("[SERVER] Received request for bandit history")
+        try:
+            from shinka.llm.bandit_history import BanditHistory
+            
+            history = BanditHistory.get_instance()
+            summary = history.get_summary()
+            recent = history.get_recent_interactions(limit=100)
+            
+            self.send_json_response({
+                "success": True,
+                **summary,
+                "recent_interactions": recent,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error getting bandit history: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e),
+            })
+
+    def handle_bandit_history_clear(self):
+        """Clear global bandit history."""
+        print("[SERVER] Received request to clear bandit history")
+        try:
+            from shinka.llm.bandit_history import BanditHistory
+            
+            history = BanditHistory.get_instance()
+            history.clear_history()
+            
+            self.send_json_response({
+                "success": True,
+                "message": "Bandit history cleared",
+            })
+        except Exception as e:
+            print(f"[SERVER] Error clearing bandit history: {e}")
+            self.send_json_response({
+                "success": False,
                 "error": str(e),
             })
 
@@ -579,6 +980,43 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "error": str(e),
             })
 
+    def handle_jules_status(self):
+        """Return Jules auth status and connected repos count."""
+        print("[SERVER] Received request for Jules status")
+        try:
+            from shinka.tools.auth_status import check_jules_auth
+
+            status = check_jules_auth()
+            result = {
+                "authenticated": status.available,
+                "plan": status.plan,
+                "error": status.error,
+                "repos_count": 0,
+            }
+
+            # If authenticated, try to get connected repos count
+            if status.available:
+                try:
+                    from shinka.edit.jules_api import JulesAPIClient, get_jules_api_key
+
+                    api_key = get_jules_api_key()
+                    if api_key:
+                        client = JulesAPIClient(api_key)
+                        sources = client.list_sources()
+                        result["repos_count"] = len(sources)
+                except Exception as e:
+                    print(f"[SERVER] Error getting Jules repos: {e}")
+                    # Don't fail the whole request, just leave repos_count at 0
+
+            self.send_json_response(result)
+        except Exception as e:
+            print(f"[SERVER] Error getting Jules status: {e}")
+            self.send_json_response({
+                "authenticated": False,
+                "error": str(e),
+                "repos_count": 0,
+            })
+
     def handle_codex_usage(self):
         """Return Codex usage and auth status."""
         print("[SERVER] Received request for Codex usage")
@@ -643,6 +1081,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "openai": "codex",
                 "anthropic": "claude",
                 "google": "gemini",
+                "jules": "jules",
+                "github": "github",
                 "deepseek": "deepseek",
                 "openrouter": "openrouter",
                 "azure": "azure",
@@ -738,11 +1178,13 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 # This ensures ShinkaAgent can see it without restart
                 env_var_map = {
                     "codex": "OPENAI_API_KEY",
-                    "gemini": "GEMINI_API_KEY", 
+                    "gemini": "GEMINI_API_KEY",
                     "claude": "ANTHROPIC_API_KEY",
                     "deepseek": "DEEPSEEK_API_KEY",
                     "openrouter": "OPENROUTER_API_KEY",
                     "azure": "AZURE_OPENAI_API_KEY",
+                    "jules": "JULES_API_KEY",
+                    "github": "GITHUB_TOKEN",
                 }
                 env_var = env_var_map.get(backend_provider)
                 if env_var:
@@ -757,6 +1199,108 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             print(f"[SERVER] Error saving credentials: {e}")
             import traceback
             traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_credentials_test(self):
+        """Test an API key against the provider's API."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+            
+            provider = data.get("provider", "").lower()
+            api_key = data.get("api_key", "")
+
+            if not provider:
+                self.send_json_response({"ok": False, "error": "Missing provider"})
+                return
+                
+            # If the key is masked (from the frontend cache), try to load the real key
+            # This allows testing a key that was just saved or previously configured
+            if not api_key or "···" in api_key or "•••" in api_key:
+                stored_key = get_api_key(provider)
+                if stored_key:
+                    api_key = stored_key
+                else:
+                    self.send_json_response({"ok": False, "error": "No stored API key found to test"})
+                    return
+
+            if not api_key:
+                 self.send_json_response({"ok": False, "error": "Missing API key"})
+                 return
+
+            tester = CredentialTester()
+            result = tester.test_credential(provider, api_key)
+            
+            self.send_json_response(result)
+
+        except Exception as e:
+            print(f"[SERVER] Error testing credentials: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_custom_providers_get(self):
+        """Return list of custom provider configurations."""
+        print("[SERVER] Received GET request for custom providers")
+        try:
+            from shinka.tools.credentials import get_custom_providers
+
+            providers = get_custom_providers()
+            self.send_json_response({
+                "ok": True,
+                "providers": providers,
+            })
+        except Exception as e:
+            print(f"[SERVER] Error getting custom providers: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_custom_providers_post(self):
+        """Save a custom provider configuration."""
+        print("[SERVER] Received POST request to save custom provider")
+        try:
+            from shinka.tools.credentials import save_custom_provider
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+
+            provider_id = data.get("id", "").lower().replace(" ", "_")
+            if not provider_id:
+                self.send_json_response({"ok": False, "error": "No provider ID specified"})
+                return
+
+            config = {
+                "name": data.get("name", provider_id),
+                "env_var": data.get("env_var", f"CUSTOM_{provider_id.upper()}_API_KEY"),
+                "base_url": data.get("base_url", ""),
+                "models": data.get("models", []),
+                "placeholder": data.get("placeholder", "Enter API key..."),
+            }
+
+            save_custom_provider(provider_id, config)
+            print(f"[SERVER] Saved custom provider: {provider_id}")
+
+            self.send_json_response({"ok": True, "provider_id": provider_id})
+
+        except json.JSONDecodeError as e:
+            self.send_json_response({"ok": False, "error": f"Invalid JSON: {e}"})
+        except Exception as e:
+            print(f"[SERVER] Error saving custom provider: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_custom_provider_delete(self, provider_id: str):
+        """Delete a custom provider configuration."""
+        print(f"[SERVER] Received DELETE request for custom provider: {provider_id}")
+        try:
+            from shinka.tools.credentials import remove_custom_provider
+
+            removed = remove_custom_provider(provider_id)
+            if removed:
+                self.send_json_response({"ok": True, "action": "deleted"})
+            else:
+                self.send_json_response({"ok": False, "error": f"Provider '{provider_id}' not found"})
+
+        except Exception as e:
+            print(f"[SERVER] Error deleting custom provider: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
 
     def handle_evolution_runs(self):
@@ -798,29 +1342,42 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                             "pid": None,
                         }
                         
-                        # Check if there's a PID file indicating a running process
+                        # Check if there's a PID file indicating a running process.
+                        # We treat a PID as authoritative only if it still appears to
+                        # belong to this run, otherwise we consider it stale.
+                        pid = None
+                        pid_alive = False
                         pid_path = os.path.join(run_dir, "shinka.pid")
                         if os.path.exists(pid_path):
                             try:
-                                with open(pid_path, 'r') as f:
+                                with open(pid_path, "r") as f:
                                     pid = int(f.read().strip())
                                     run_info["pid"] = pid
-                                    
-                                    # Check if process is still running
-                                    try:
-                                        os.kill(pid, 0)  # Signal 0 just checks if process exists
-                                        run_info["status"] = "running"
-                                    except (OSError, ProcessLookupError):
-                                        # Process is not running
-                                        pass
+
+                                try:
+                                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                                    pid_alive = True
+                                except (OSError, ProcessLookupError):
+                                    pid_alive = False
                             except (ValueError, IOError):
-                                pass
+                                pid = None
+                                pid_alive = False
+
+                        # Determine if this run is active.
+                        active_sessions = self._get_active_sessions_for_run(run_dir, now)
+                        pid_matches = pid_alive and pid_matches_run(pid, run_dir)
+                        if active_sessions or pid_matches:
+                            run_info["status"] = "running"
+                        else:
+                            run_info["status"] = "completed"
+                            if pid_alive and pid is not None and not pid_matches:
+                                run_info["stale_pid"] = True
                         
                         # Get generation count and agent type from database
                         try:
-                            conn = sqlite3.connect(db_path)
+                            conn = get_readonly_connection(db_path)
                             cursor = conn.cursor()
-                            
+
                             # Get max generation
                             cursor.execute("SELECT MAX(generation) FROM programs")
                             max_gen = cursor.fetchone()[0]
@@ -837,9 +1394,23 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                             if row and row[0]:
                                 try:
                                     meta = json.loads(row[0])
-                                    backend = meta.get("agent_backend") or meta.get("patch_type", "Unknown")
-                                    run_info["agent_type"] = backend
-                                except:
+                                    backend = meta.get("agent_backend")
+                                    backend_type = meta.get("agent_backend_type")
+                                    if backend:
+                                        provider_label = (
+                                            "ShinkaAgent"
+                                            if backend == "shinka"
+                                            else str(backend).title()
+                                        )
+                                        type_label = (
+                                            "native"
+                                            if backend_type == "native"
+                                            else "CLI"
+                                        )
+                                        run_info["agent_type"] = f"{provider_label} ({type_label})"
+                                    else:
+                                        run_info["agent_type"] = meta.get("patch_type", "Unknown")
+                                except (json.JSONDecodeError, KeyError, TypeError):
                                     pass
                             
                             conn.close()
@@ -853,7 +1424,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 run_info["start_time"] = os.path.getmtime(hydra_config)
                             else:
                                 run_info["start_time"] = os.path.getmtime(run_dir)
-                        except:
+                        except OSError:
                             pass
                         
                         # Calculate duration
@@ -866,7 +1437,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 try:
                                     db_mtime = os.path.getmtime(db_path)
                                     elapsed = db_mtime - run_info["start_time"]
-                                except:
+                                except OSError:
                                     elapsed = 0
                             
                             hrs = int(elapsed // 3600)
@@ -876,11 +1447,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                             else:
                                 run_info["duration"] = f"{mins}m"
                         
-                        # For running jobs, also get active sessions
-                        if run_info["status"] == "running":
-                            run_info["active_sessions"] = self._get_active_sessions_for_run(run_dir, now)
-                        else:
-                            run_info["active_sessions"] = []
+                        # For running jobs, include active sessions computed above
+                        run_info["active_sessions"] = active_sessions if run_info["status"] == "running" else []
                         
                         runs.append(run_info)
             
@@ -910,24 +1478,36 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "is_external": True,  # Mark as external workspace
                 }
 
-                # Check PID file
+                # Check PID file. Use the same stale-PID protection as local runs.
+                pid = None
+                pid_alive = False
                 pid_path = os.path.join(external_run_dir, "shinka.pid")
                 if os.path.exists(pid_path):
                     try:
-                        with open(pid_path, 'r') as f:
+                        with open(pid_path, "r") as f:
                             pid = int(f.read().strip())
                             run_info["pid"] = pid
-                            try:
-                                os.kill(pid, 0)
-                                run_info["status"] = "running"
-                            except (OSError, ProcessLookupError):
-                                pass
+                        try:
+                            os.kill(pid, 0)
+                            pid_alive = True
+                        except (OSError, ProcessLookupError):
+                            pid_alive = False
                     except (ValueError, IOError):
-                        pass
+                        pid = None
+                        pid_alive = False
+
+                active_sessions = self._get_active_sessions_for_run(external_run_dir, now)
+                pid_matches = pid_alive and pid_matches_run(pid, external_run_dir)
+                if active_sessions or pid_matches:
+                    run_info["status"] = "running"
+                else:
+                    run_info["status"] = "completed"
+                    if pid_alive and pid is not None and not pid_matches:
+                        run_info["stale_pid"] = True
 
                 # Get DB info
                 try:
-                    conn = sqlite3.connect(db_path)
+                    conn = get_readonly_connection(db_path)
                     cursor = conn.cursor()
                     cursor.execute("SELECT MAX(generation) FROM programs")
                     max_gen = cursor.fetchone()[0]
@@ -941,8 +1521,23 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if row and row[0]:
                         try:
                             meta = json.loads(row[0])
-                            run_info["agent_type"] = meta.get("agent_backend") or meta.get("patch_type", "Unknown")
-                        except:
+                            backend = meta.get("agent_backend")
+                            backend_type = meta.get("agent_backend_type")
+                            if backend:
+                                provider_label = (
+                                    "ShinkaAgent"
+                                    if backend == "shinka"
+                                    else str(backend).title()
+                                )
+                                type_label = (
+                                    "native"
+                                    if backend_type == "native"
+                                    else "CLI"
+                                )
+                                run_info["agent_type"] = f"{provider_label} ({type_label})"
+                            else:
+                                run_info["agent_type"] = meta.get("patch_type", "Unknown")
+                        except (json.JSONDecodeError, KeyError, TypeError):
                             pass
                     conn.close()
                 except Exception as e:
@@ -955,7 +1550,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         run_info["start_time"] = os.path.getmtime(hydra_config)
                     else:
                         run_info["start_time"] = os.path.getmtime(external_run_dir)
-                except:
+                except OSError:
                     pass
 
                 # Duration
@@ -965,16 +1560,13 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     else:
                         try:
                             elapsed = os.path.getmtime(db_path) - run_info["start_time"]
-                        except:
+                        except OSError:
                             elapsed = 0
                     hrs = int(elapsed // 3600)
                     mins = int((elapsed % 3600) // 60)
                     run_info["duration"] = f"{hrs}h {mins}m" if hrs > 0 else f"{mins}m"
 
-                if run_info["status"] == "running":
-                    run_info["active_sessions"] = self._get_active_sessions_for_run(external_run_dir, now)
-                else:
-                    run_info["active_sessions"] = []
+                run_info["active_sessions"] = active_sessions if run_info["status"] == "running" else []
 
                 runs.append(run_info)
 
@@ -1113,9 +1705,63 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     break
             
             if not session_info:
+                # Fallback: PID registry might be missing for long-running sessions
+                # (e.g., scratch-based agentic runs). Try to locate the session dir
+                # directly on disk by session_id.
+                candidate_dirs: List[Path] = []
+                scratch_candidate = Path("/tmp/shinka_scratch") / session_id
+                if scratch_candidate.exists():
+                    candidate_dirs.append(scratch_candidate)
+
+                try:
+                    search_root = Path(self.search_root)
+                    for subdir in ("agent_sessions", "agentic_eval_sessions"):
+                        candidate_dirs.extend(
+                            list(search_root.glob(f"**/{subdir}/{session_id}"))
+                        )
+                except Exception:
+                    pass
+
+                if not candidate_dirs:
+                    return self.send_json_response({
+                        "error": "Session not found",
+                        "status": "not_found"
+                    })
+
+                workdir = str(candidate_dirs[0])
+                meta_path = os.path.join(workdir, "session_meta.json")
+                log_path = os.path.join(workdir, "session_log.jsonl")
+
+                meta = {}
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, "r") as f:
+                            meta = json.load(f)
+                    except Exception:
+                        meta = {}
+
+                # Promote legacy key to the one the UI expects.
+                if "started_at" not in meta and "start_time" in meta:
+                    meta["started_at"] = meta.get("start_time")
+
+                events = []
+                if os.path.exists(log_path):
+                    with open(log_path, "r") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                events.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+
+                parsed = self._parse_session_events(events)
                 return self.send_json_response({
-                    "error": "Session not found",
-                    "status": "not_found"
+                    "meta": meta,
+                    "events": events,
+                    "parsed": parsed,
+                    "status": "running",
                 })
             
             workdir = session_info.get("workdir", "")
@@ -1312,7 +1958,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                                 item = event.get("item", {})
                                                 cmd = item.get("command", event.get("command", ""))[:30]
                                                 session_info["current_action"] = f"Running: {cmd}..." if cmd else f"Running Gen {generation}"
-                            except:
+                            except (OSError, json.JSONDecodeError, KeyError):
                                 pass
                     
                     active_sessions.append(session_info)
@@ -1332,6 +1978,24 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         generation = job.get("generation")
                         parent_id = job.get("parent_id")
                         start_time = job.get("start_time", 0)
+
+                        # If the launcher recorded a PID-based job id, verify the PID is
+                        # still alive and still points at this run. This avoids stale
+                        # active_jobs.json entries after crashes.
+                        pid_from_job = None
+                        if isinstance(job_id, str) and job_id.startswith("pid_"):
+                            try:
+                                pid_from_job = int(job_id.split("_", 1)[1])
+                            except ValueError:
+                                pid_from_job = None
+
+                        if pid_from_job is not None:
+                            try:
+                                os.kill(pid_from_job, 0)
+                            except (OSError, ProcessLookupError):
+                                continue
+                            if not pid_matches_run(pid_from_job, run_dir):
+                                continue
                         
                         # Determine session type from job_id
                         if "eval" in job_id.lower():
@@ -1357,10 +2021,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         # This is a FALLBACK for sessions not tracked in the registry (e.g., legacy runs).
         # Note: Time-based detection is unreliable for long-running sessions that block
         # on slow commands - prefer the PID-based registry check above.
-        # Use different time windows: edit sessions can be long, eval sessions are quicker
+        # Use different time windows: edit sessions can be long, eval sessions are quicker.
+        # The previous sub-2-minute windows were too short for real-time streaming once
+        # PID-based registry entries drop out (e.g., long Codex/Gemini sessions).
         session_dirs = [
-            (os.path.join(run_dir, "agent_sessions"), "edit", 120),  # 2 min window
-            (os.path.join(run_dir, "agentic_eval_sessions"), "eval", 90),  # 1.5 min window
+            (os.path.join(run_dir, "agent_sessions"), "edit", 3600),  # 1 hour window
+            (os.path.join(run_dir, "agentic_eval_sessions"), "eval", 600),  # 10 min window
         ]
         
         for sessions_dir, session_type, time_window in session_dirs:
@@ -1402,7 +2068,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                         session_info["parent_id"] = meta.get("parent_id")
                                         session_info["patch_type"] = meta.get("patch_type")
                                         session_info["backend"] = meta.get("backend")
-                                except:
+                                except (OSError, json.JSONDecodeError, KeyError):
                                     pass
                             
                             # Get last few events from log
@@ -1437,7 +2103,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                                     session_info["current_action"] = "Evaluating..."
                                                 else:
                                                     session_info["current_action"] = event_type or "Working..."
-                            except:
+                            except (OSError, json.JSONDecodeError, KeyError):
                                 # Default action based on session type
                                 if session_type == "eval":
                                     session_info["current_action"] = "Evaluating..."
@@ -1481,7 +2147,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                         log_path = os.path.join(session_path, "session_log.jsonl")
                                         if os.path.exists(log_path):
                                             stat = os.stat(log_path)
-                                            if now - stat.st_mtime < 120:  # 2 min window for scratch
+                                            if now - stat.st_mtime < 3600:  # 1 hour window for scratch
                                                 # Don't duplicate if already tracked
                                                 if not any(s["session_id"] == session_id for s in active_sessions):
                                                     generation = meta.get("generation")
@@ -1514,12 +2180,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                                                                         item = event.get("item", {})
                                                                         cmd = item.get("command", event.get("command", ""))[:30]
                                                                         session_info["current_action"] = f"Running: {cmd}..." if cmd else f"Running Gen {generation}"
-                                                    except:
+                                                    except (json.JSONDecodeError, KeyError, TypeError):
                                                         pass
                                                     active_sessions.append(session_info)
-                        except:
+                        except (OSError, json.JSONDecodeError, KeyError):
                             pass
-            except:
+            except OSError:
                 pass
 
         return active_sessions
@@ -1664,12 +2330,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 config = DatabaseConfig(db_path=abs_db_path)
                 db = ProgramDatabase(config, read_only=True)
 
-                # Set WAL mode compatible settings for read-only connections
+                # Set read-only compatible connection settings
                 if db.cursor:
                     db.cursor.execute(
                         "PRAGMA busy_timeout = 10000;"
                     )  # 10 second timeout
-                    db.cursor.execute("PRAGMA journal_mode = WAL;")  # Ensure WAL mode
+                    # Note: Don't set journal_mode on read-only connections - it requires write access
 
                 programs = db.get_all_programs()
 
@@ -1754,7 +2420,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             if db.cursor:
                 db.cursor.execute("PRAGMA busy_timeout = 10000;")
-                db.cursor.execute("PRAGMA journal_mode = WAL;")
+                # Note: Don't set journal_mode on read-only connections - it requires write access
 
             # Query for single program by ID
             db.cursor.execute(
@@ -2565,6 +3231,43 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             print(f"[SERVER] Error in native folder picker: {e}")
             self.send_json_response({"ok": False, "error": str(e), "fallback": True})
 
+    def handle_local_probe(self, query: Dict[str, Any]):
+        """Probe a local path to determine git status for isolation UI.
+
+        Query params:
+            path: filesystem path to probe.
+        """
+        try:
+            path_list = query.get("path", [""])
+            raw_path = path_list[0] if path_list else ""
+            if not raw_path:
+                self.send_json_response({"ok": False, "error": "No path provided"})
+                return
+
+            p = Path(raw_path).expanduser().resolve()
+            if not p.exists():
+                self.send_json_response({"ok": False, "error": f"Path not found: {p}"})
+                return
+            if not p.is_dir():
+                self.send_json_response({"ok": False, "error": f"Not a directory: {p}"})
+                return
+
+            git_repo = is_git_repo(p)
+            dirty = is_dirty_repo(p) if git_repo else False
+            current_ref = get_current_ref(p) if git_repo else None
+
+            self.send_json_response(
+                {
+                    "ok": True,
+                    "path": str(p),
+                    "is_git_repo": git_repo,
+                    "is_dirty": dirty,
+                    "current_ref": current_ref,
+                }
+            )
+        except Exception as e:
+            self.send_json_response({"ok": False, "error": str(e)})
+
     def handle_git_prepare(self):
         """Prepare a git workspace (clone or worktree)."""
         try:
@@ -2595,6 +3298,443 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[SERVER] Error preparing git workspace: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_provision_worktree(self):
+        """Provision a git worktree for a specific evolution node.
+
+        Creates a persistent worktree at the specified path (or auto-generated)
+        from the evolution's git-backed storage. The worktree contains the
+        exact code state at that node's commit.
+
+        Request body:
+            db_path: Path to the evolution database
+            program_id: ID of the program/node to checkout
+            target_path: (optional) Where to create the worktree
+
+        Response:
+            ok: True if successful
+            worktree_path: Path to the created worktree
+            commit_sha: The commit SHA checked out
+            note: Information about where the worktree was created
+        """
+        try:
+            data = self._read_json_body()
+            db_path = data.get("db_path")
+            program_id = data.get("program_id")
+            target_path = data.get("target_path")
+
+            if not db_path or not program_id:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "db_path and program_id are required"
+                })
+                return
+
+            # Resolve the database path
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Database not found: {db_path}"
+                })
+                return
+
+            # Results directory is parent of the database
+            results_dir = Path(abs_db_path).parent
+
+            # Look for evolution git repo (evolution.git in results dir)
+            evolution_repo_path = results_dir / "evolution.git"
+            if not evolution_repo_path.exists():
+                # Fall back to checking if there's a workspace with commit SHAs
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No git-backed evolution storage found for this run. "
+                             "This feature requires runs with git_backed_storage=true."
+                })
+                return
+
+            # Look up the program's commit SHA from the database
+            con = get_readonly_connection(abs_db_path)
+            cur = con.cursor()
+            cur.execute("SELECT metadata, generation FROM programs WHERE id = ?", (program_id,))
+            row = cur.fetchone()
+            con.close()
+
+            if not row:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Program not found: {program_id}"
+                })
+                return
+
+            metadata_str, generation = row
+            commit_sha = None
+            if metadata_str:
+                metadata = json.loads(metadata_str)
+                commit_sha = metadata.get("git_commit_sha")
+
+            if not commit_sha:
+                # Try looking up via ref
+                try:
+                    manager = EvolutionGitManager(evolution_repo_path, create=False)
+                    # Check if there's a ref for this node
+                    result = subprocess.run(
+                        ["git", "rev-parse", f"refs/shinka/nodes/{program_id}"],
+                        cwd=str(evolution_repo_path),
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        commit_sha = result.stdout.strip()
+                except Exception:
+                    pass
+
+            if not commit_sha:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Program does not have a commit SHA. "
+                             "It may not be from a git-backed evolution run."
+                })
+                return
+
+            # Determine target path
+            if not target_path:
+                # Auto-generate path in results directory
+                target_path = results_dir / "worktrees" / f"node_{program_id[:8]}_gen{generation}"
+            else:
+                target_path = Path(target_path)
+
+            # Create the worktree
+            manager = EvolutionGitManager(evolution_repo_path, create=False)
+            worktree_path = manager.create_user_worktree(commit_sha, target_path)
+
+            self.send_json_response({
+                "ok": True,
+                "worktree_path": str(worktree_path),
+                "commit_sha": commit_sha,
+                "note": f"Worktree created on server at: {worktree_path}"
+            })
+
+        except Exception as e:
+            import traceback
+            print(f"[SERVER] Error provisioning worktree: {e}")
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_run_recorded_command(self):
+        """Run a human-runnable command recorded by the agentic evaluator.
+
+        This endpoint executes the `private.run_command` stored in a program's
+        private_metrics (persisted from gen_N/results/metrics.json).
+
+        Request body:
+            db_path: Path to evolution database
+            program_id: (optional) Specific program to run
+            best: (optional, default True) Run best program if no program_id
+            dry_run: (optional, default False) If True, only returns command/workdir
+
+        Response:
+            ok: True/False
+            command: The shell command to run
+            workdir: Working directory used
+            log_dir: Directory containing stdout/stderr logs (if executed)
+            pid: Process ID (if executed)
+        """
+        try:
+            data = self._read_json_body()
+            db_path = data.get("db_path")
+            program_id = data.get("program_id")
+            best = data.get("best", True)
+            dry_run = bool(data.get("dry_run", False))
+
+            if not db_path:
+                self.send_json_response({"ok": False, "error": "db_path is required"})
+                return
+
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_json_response({"ok": False, "error": f"Database not found: {db_path}"})
+                return
+
+            run_root = Path(abs_db_path).parent
+
+            # Security check: ensure run_root is under search_root OR in launched_run_roots
+            run_path = run_root.resolve()
+            search_root = Path(self.search_root).resolve()
+            is_allowed = str(run_path).startswith(str(search_root))
+            if not is_allowed:
+                for external_root in launched_run_roots:
+                    ext_abs = Path(external_root).resolve()
+                    if (
+                        str(run_path).startswith(str(ext_abs))
+                        or str(run_path) == str(ext_abs)
+                        or str(ext_abs).startswith(str(run_path))
+                    ):
+                        is_allowed = True
+                        break
+
+            if not is_allowed:
+                self.send_json_response({"ok": False, "error": "Path is outside the allowed directory"})
+                return
+
+            config = DatabaseConfig(db_path=str(abs_db_path))
+            db = ProgramDatabase(config, read_only=True)
+            if db.cursor:
+                db.cursor.execute("PRAGMA busy_timeout = 10000;")
+                # Note: Don't set journal_mode on read-only connections - it requires write access
+
+            target_program = None
+            if program_id:
+                target_program = db.get(program_id)
+            else:
+                top = db.get_top_programs(n=1, correct_only=True)
+                if not top:
+                    top = db.get_top_programs(n=1, correct_only=False)
+                target_program = top[0] if top else None
+
+            if not target_program:
+                self.send_json_response({"ok": False, "error": "No programs found for this run"})
+                return
+
+            private_metrics = target_program.private_metrics or {}
+            run_command = private_metrics.get("run_command") or private_metrics.get("run_cmd")
+            run_workdir_val = private_metrics.get("run_workdir") or private_metrics.get("run_cwd")
+            run_notes = private_metrics.get("run_notes") or private_metrics.get("run_warning")
+
+            if not isinstance(run_command, str) or not run_command.strip():
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No run_command recorded for this node/run (agentic evaluator required).",
+                })
+                return
+
+            # Determine working directory
+            workdir = None
+            if run_workdir_val:
+                try:
+                    p = Path(str(run_workdir_val))
+                    workdir = p if p.is_absolute() else (run_root / p)
+                except Exception:
+                    workdir = run_root / str(run_workdir_val)
+            else:
+                best_dir = run_root / "best"
+                if best and best_dir.exists():
+                    workdir = best_dir
+                else:
+                    workdir = run_root / f"gen_{target_program.generation}"
+
+            if not workdir.exists():
+                # Fall back to run_root if specified workdir is missing
+                workdir = run_root
+
+            payload = {
+                "ok": True,
+                "command": run_command.strip(),
+                "workdir": str(workdir),
+                "program_id": target_program.id,
+                "generation": target_program.generation,
+            }
+            if run_notes:
+                payload["run_notes"] = run_notes
+
+            if dry_run:
+                self.send_json_response(payload)
+                return
+
+            # Create a log sink per click without overwriting evolutionary results
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            manual_root = run_root / "manual_runs" / f"{timestamp}_gen{target_program.generation}_{target_program.id[:8]}"
+            manual_root.mkdir(parents=True, exist_ok=True)
+            stdout_path = manual_root / "job_log.out"
+            stderr_path = manual_root / "job_log.err"
+
+            stdout_f = open(stdout_path, "w", encoding="utf-8")
+            stderr_f = open(stderr_path, "w", encoding="utf-8")
+            process = subprocess.Popen(
+                run_command,
+                cwd=str(workdir),
+                shell=True,
+                stdout=stdout_f,
+                stderr=stderr_f,
+                text=True,
+                env=os.environ.copy(),
+            )
+            stdout_f.close()
+            stderr_f.close()
+
+            payload.update({
+                "pid": process.pid,
+                "log_dir": str(manual_root),
+                "message": "Manual run started",
+            })
+            self.send_json_response(payload)
+
+        except Exception as e:
+            import traceback
+            print(f"[SERVER] Error running recorded command: {e}")
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_export_git_repo(self):
+        """Export the evolution run as a downloadable git repository.
+
+        Creates a zip archive containing the full git repository with
+        all evolutionary nodes visible via refs/shinka/nodes/*.
+
+        Request body:
+            db_path: Path to the evolution database
+            format: 'zip' (default) or 'tar'
+
+        Response:
+            ok: True if successful
+            download_url: URL to download the archive
+            filename: Suggested filename for the download
+            export_path: Path where the archive was created
+        """
+        import shutil
+        import zipfile
+
+        try:
+            data = self._read_json_body()
+            db_path = data.get("db_path")
+            export_format = data.get("format", "zip")
+
+            if not db_path:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "db_path is required"
+                })
+                return
+
+            # Resolve the database path
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Database not found: {db_path}"
+                })
+                return
+
+            # Results directory is parent of the database
+            results_dir = Path(abs_db_path).parent
+
+            # Look for evolution git repo
+            evolution_repo_path = results_dir / "evolution.git"
+            if not evolution_repo_path.exists():
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No git-backed evolution storage found for this run. "
+                             "This feature requires runs with git_backed_storage=true."
+                })
+                return
+
+            # Create export directory
+            exports_dir = results_dir / "exports"
+            exports_dir.mkdir(exist_ok=True)
+
+            # Generate unique export name
+            timestamp = int(time.time())
+            export_name = f"evolution_export_{timestamp}"
+            export_dir = exports_dir / export_name
+
+            # Export the repository
+            manager = EvolutionGitManager(evolution_repo_path, create=False)
+            exported_path = manager.export_as_repo(export_dir)
+
+            # Create archive
+            if export_format == "zip":
+                archive_path = exports_dir / f"{export_name}.zip"
+                with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(exported_path):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = file_path.relative_to(exported_path.parent)
+                            zipf.write(file_path, arcname)
+                # Clean up exported directory after zipping
+                shutil.rmtree(exported_path, ignore_errors=True)
+            else:
+                archive_path = export_dir
+                # Keep the exported directory for tar format
+
+            # Generate download URL
+            # The archive will be served from a special download endpoint
+            download_id = f"{export_name}.zip" if export_format == "zip" else export_name
+            download_url = f"/download/exports/{download_id}?db_path={urllib.parse.quote(db_path)}"
+
+            self.send_json_response({
+                "ok": True,
+                "download_url": download_url,
+                "filename": f"{export_name}.zip",
+                "export_path": str(archive_path),
+            })
+
+        except Exception as e:
+            import traceback
+            print(f"[SERVER] Error exporting git repository: {e}")
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_download_export(self, path: str, query: Dict[str, Any]):
+        """Serve exported git repository archives for download.
+
+        Args:
+            path: Request path like /download/exports/evolution_export_123.zip
+            query: Query parameters including db_path
+        """
+        try:
+            # Extract filename from path
+            parts = path.split("/")
+            if len(parts) < 4:
+                self.send_error(400, "Invalid download path")
+                return
+
+            filename = parts[3]  # e.g., "evolution_export_123.zip"
+            db_path = query.get("db_path", [""])[0]
+
+            if not db_path:
+                self.send_error(400, "db_path query parameter required")
+                return
+
+            # Resolve the database path
+            abs_db_path = self._resolve_db_path(db_path)
+            if not abs_db_path or not Path(abs_db_path).exists():
+                self.send_error(404, "Database not found")
+                return
+
+            # Find the export file
+            results_dir = Path(abs_db_path).parent
+            export_path = results_dir / "exports" / filename
+
+            if not export_path.exists():
+                self.send_error(404, f"Export file not found: {filename}")
+                return
+
+            # Security check: ensure file is under exports directory
+            try:
+                export_path.resolve().relative_to((results_dir / "exports").resolve())
+            except ValueError:
+                self.send_error(403, "Access denied")
+                return
+
+            # Serve the file
+            with open(export_path, "rb") as f:
+                content = f.read()
+
+            self.send_response(200)
+            if filename.endswith(".zip"):
+                self.send_header("Content-Type", "application/zip")
+            else:
+                self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        except Exception as e:
+            import traceback
+            print(f"[SERVER] Error serving export download: {e}")
+            traceback.print_exc()
+            self.send_error(500, str(e))
 
     # ========== CLI Config Handlers ==========
 
@@ -2765,6 +3905,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "profiles": profiles,
                     "selected": selected.get("profile", "default"),
                     "sandbox": selected.get("sandbox", "workspace-write"),
+                    "model_reasoning_effort": selected.get("model_reasoning_effort"),
                 })
             elif provider == "gemini":
                 manager = GeminiConfigManager()
@@ -2804,6 +3945,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "profile": data.get("profile", "default"),
                     "sandbox": data.get("sandbox", "workspace-write"),
                 }
+                effort = data.get("model_reasoning_effort")
+                if isinstance(effort, str) and effort.strip():
+                    selection["model_reasoning_effort"] = effort.strip()
             elif provider == "gemini":
                 selection = {
                     "system_prompt_file": data.get("system_prompt_file"),
@@ -2886,7 +4030,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             target_commit = "HEAD"
             if program_id:
                 # Look up the program's commit_sha from the database
-                con = sqlite3.connect(abs_db_path)
+                con = get_readonly_connection(abs_db_path)
                 cur = con.cursor()
                 cur.execute("SELECT metadata FROM programs WHERE id = ?", (program_id,))
                 row = cur.fetchone()
@@ -2992,7 +4136,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             # Look up the program's commit_sha from the database
-            con = sqlite3.connect(abs_db_path)
+            con = get_readonly_connection(abs_db_path)
             cur = con.cursor()
             cur.execute("SELECT metadata, generation FROM programs WHERE id = ?", (program_id,))
             row = cur.fetchone()
@@ -3127,6 +4271,28 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         "message": f"{provider} credentials not configured",
                     })
 
+            # Jules-specific validation
+            if ui_config.agent_backend == "jules":
+                # Check Jules credentials
+                jules_status = checker.check_provider("jules")
+                github_status = checker.check_provider("github")
+                if not jules_status["available"]:
+                    errors.append({
+                        "field": "agent.backend",
+                        "message": "Jules API key (JULES_API_KEY) not configured",
+                    })
+                if not github_status["available"]:
+                    errors.append({
+                        "field": "agent.backend",
+                        "message": "GitHub token (GITHUB_TOKEN) not configured",
+                    })
+                # Check that github_repo is set
+                if not ui_config.jules_github_repo:
+                    errors.append({
+                        "field": "agent.jules_config.github_repo",
+                        "message": "GitHub repository (owner/repo) is required for Jules",
+                    })
+
             # Warnings
             if ui_config.agent_max_turns > 100:
                 warnings.append({
@@ -3248,6 +4414,77 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json_response({"ok": False, "error": str(e)})
 
+    # ========== Plan-with-AI Handlers ==========
+
+    def handle_plan_session_start(self):
+        """Start or resume an AI planning session for edit or evaluator prompts."""
+        try:
+            data = self._read_json_body()
+            kind = data.get("kind", "edit")
+            goal = data.get("user_goal", "") or ""
+            context = data.get("context", {}) or {}
+            resume_session_id = data.get("resume_session_id")
+            model = data.get("model")  # Optional override
+
+            # For evaluator planning, inject current edit prompt as background.
+            if kind == "eval":
+                edit_bg = context.get("edit_prompt_background") or context.get(
+                    "existing_task_sys_msg"
+                )
+                if edit_bg:
+                    context["edit_prompt_background"] = edit_bg
+
+            session_id, session_dir = start_plan_session(
+                kind=kind,
+                goal=goal,
+                context=context,
+                resume_session_id=resume_session_id,
+                model=model,
+            )
+
+            self.send_json_response(
+                {
+                    "ok": True,
+                    "session_id": session_id,
+                    "session_dir": str(session_dir),
+                }
+            )
+        except Exception as e:
+            print(f"[SERVER] Error starting plan session: {e}")
+            import traceback
+
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_plan_session_message(self):
+        """Append a user message to an existing plan session."""
+        try:
+            data = self._read_json_body()
+            session_id = data.get("session_id")
+            user_message = data.get("user_message", "") or ""
+            model = data.get("model")
+
+            if not session_id:
+                return self.send_json_response(
+                    {"ok": False, "error": "session_id required"}
+                )
+
+            append_plan_message(
+                session_id=session_id,
+                user_message=user_message,
+                model=model,
+            )
+
+            self.send_json_response({"ok": True})
+        except Exception as e:
+            print(f"[SERVER] Error sending plan message: {e}")
+            import traceback
+
+            traceback.print_exc()
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    # ========== End Plan-with-AI Handlers ==========
+
     def handle_evolution_run_start(self):
         """Start a new evolution run."""
         try:
@@ -3260,6 +4497,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             original_source_path = None  # Track original for reference
             pre_computed_results_dir = None  # Set when using isolated workspace
             manager = None  # Only create when needed for git operations
+            workspace_isolation_strategy: Optional[str] = None  # for UI visibility
 
             # For isolated local workspaces, determine final run name BEFORE creating workspace
             # This handles auto-increment of run names if a previous run exists
@@ -3281,7 +4519,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                     # Check if existing DB has programs
                     try:
-                        con = sqlite3.connect(candidate_db)
+                        con = get_readonly_connection(str(candidate_db))
                         cur = con.cursor()
                         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
                         has_table = cur.fetchone() is not None
@@ -3326,7 +4564,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         if not candidate_db.exists():
                             break
                         try:
-                            con = sqlite3.connect(candidate_db)
+                            con = get_readonly_connection(str(candidate_db))
                             cur = con.cursor()
                             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
                             has_table = cur.fetchone() is not None
@@ -3357,6 +4595,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         workspace_name=str(git_workspace_path),
                     )
                     workspace_path = info.path
+                    workspace_isolation_strategy = "worktree" if info.is_worktree else "full_clone"
                     original_source_path = ui_config.git_url
                 else:
                     # No local path - use temp directory (legacy behavior)
@@ -3367,6 +4606,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         use_worktree=ui_config.use_worktree,
                     )
                     workspace_path = info.path
+                    workspace_isolation_strategy = "worktree" if info.is_worktree else "full_clone"
                     original_source_path = ui_config.git_url
                     pre_computed_results_dir = None
             else:
@@ -3375,23 +4615,81 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     original_source_path = Path(ui_config.local_path).resolve()
 
                 if ui_config.use_worktree:
-                    # Create isolated workspace copy using the final run name
                     manager = GitWorktreeManager()  # Create manager for git operations
-                    pre_computed_results_dir = original_source_path / "results" / f"shinka_{original_source_path.name}" / final_run_name
+                    pre_computed_results_dir = (
+                        original_source_path
+                        / "results"
+                        / f"shinka_{original_source_path.name}"
+                        / final_run_name
+                    )
                     isolated_workspace_path = pre_computed_results_dir / "workspace"
 
-                    print(f"[SERVER] Creating isolated workspace from {original_source_path}")
-                    print(f"[SERVER] Isolated workspace location: {isolated_workspace_path}")
+                    print(f"[SERVER] Isolating local workspace from {original_source_path}")
 
-                    info = manager.create_local_copy(
-                        source_path=original_source_path,
-                        target_path=isolated_workspace_path,
+                    requested = (ui_config.local_isolation_strategy or "auto").lower()
+                    resolved_strategy = resolve_local_isolation_strategy(
+                        original_source_path, requested
                     )
-                    workspace_path = info.path
-                    print(f"[SERVER] Isolated workspace created with initial commit: {info.commit_sha[:8]}")
+
+                    if resolved_strategy == "worktree":
+                        ref = get_current_ref(original_source_path)
+                        print(
+                            f"[SERVER] Local repo clean; using cached worktree at ref '{ref}'."
+                        )
+                        try:
+                            info = manager.create_worktree(
+                                git_url=str(original_source_path),
+                                branch=ref,
+                                workspace_name=None,  # keep worktree outside original repo
+                            )
+                            workspace_path = info.path
+                            print(f"[SERVER] Worktree created at: {workspace_path}")
+                        except Exception as e:
+                            print(
+                                f"[SERVER] Worktree creation failed ({e}); "
+                                "falling back to snapshot copy."
+                            )
+                            resolved_strategy = "snapshot_copy"
+                    else:
+                        if not is_git_repo(original_source_path):
+                            print(
+                                "[SERVER] Local path is not a git repo; using snapshot copy."
+                            )
+                        elif is_dirty_repo(original_source_path):
+                            if requested == "worktree":
+                                print(
+                                    "[SERVER] Local repo is dirty; worktree requested but "
+                                    "falling back to snapshot copy."
+                                )
+                            else:
+                                print(
+                                    "[SERVER] Local repo is dirty; auto selects snapshot copy."
+                                )
+                        elif requested == "snapshot_copy":
+                            print(
+                                "[SERVER] Local isolation strategy: snapshot copy (forced)."
+                            )
+
+                    if workspace_path is None:
+                        # Snapshot copy path (non-git repo or dirty repo / forced copy)
+                        print(
+                            f"[SERVER] Creating isolated snapshot copy at: {isolated_workspace_path}"
+                        )
+                        info = manager.create_local_copy(
+                            source_path=original_source_path,
+                            target_path=isolated_workspace_path,
+                        )
+                        workspace_path = info.path
+                        resolved_strategy = "snapshot_copy"
+                        print(
+                            f"[SERVER] Snapshot copy created with initial commit: "
+                            f"{info.commit_sha[:8]}"
+                        )
+                    workspace_isolation_strategy = resolved_strategy
                 else:
                     # No isolation - use original path directly (no git needed)
                     workspace_path = original_source_path
+                    workspace_isolation_strategy = "none"
                     print(f"[SERVER] Using original path directly (no isolation): {workspace_path}")
 
             # Build configs
@@ -3456,7 +4754,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                     # Check if existing DB has programs
                     try:
-                        con = sqlite3.connect(existing_db)
+                        con = get_readonly_connection(str(existing_db))
                         cur = con.cursor()
                         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='programs'")
                         has_table = cur.fetchone() is not None
@@ -3494,6 +4792,8 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 f"++run_name={run_name}",
                 # Point to the target workspace seed if provided; null disables defaults
                 f"++evo_config.init_program_path={evo_config.init_program_path or 'null'}",
+                # Support directory for multi-file evolution (if specified)
+                f"++evo_config.init_support_dir={evo_config.init_support_dir or 'null'}",
                 # Set results directory to be in the workspace
                 f"++evo_config.results_dir={target_results_dir}",
                 f"++output_dir={target_results_dir}",
@@ -3604,6 +4904,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "results_path": str(target_results_dir),
                 "db_path": str(target_results_dir / db_config.db_path),
                 "log_file": str(log_file),
+                "workspace_isolation_strategy": workspace_isolation_strategy,
                 "message": f"Evolution run started successfully (PID: {process.pid})",
             })
         except Exception as e:

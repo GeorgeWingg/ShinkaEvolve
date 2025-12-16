@@ -8,6 +8,7 @@ from .models.pricing import (
     DEEPSEEK_MODELS,
     GEMINI_MODELS,
     BEDROCK_MODELS,
+    OPENROUTER_MODELS,
     REASONING_OAI_MODELS,
     REASONING_CLAUDE_MODELS,
     REASONING_DEEPSEEK_MODELS,
@@ -204,6 +205,12 @@ def query(
         query_fn = query_deepseek
     elif model_name in GEMINI_MODELS.keys():
         query_fn = query_gemini
+    elif model_name in OPENROUTER_MODELS.keys() or model_name.startswith("openrouter/"):
+        # OpenRouter is OpenAI-compatible
+        query_fn = query_openai
+    elif model_name.startswith("custom/"):
+        # Custom providers are OpenAI-compatible
+        query_fn = query_openai
     else:
         raise ValueError(f"Model {model_name} not supported.")
     result = query_fn(

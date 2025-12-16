@@ -1,0 +1,85 @@
+# Multi-evaluator ensemble configuration
+# Enables running multiple distinct evaluators per node with configurable aggregation
+
+defaults:
+  - agentic  # Inherit base agentic settings
+
+evo_config:
+  _target_: shinka.core.EvolutionConfig
+
+  evaluator:
+    _target_: shinka.core.runner.EvaluatorConfig
+    mode: ensemble
+
+    # Single evaluator fallback (used when ensemble.enabled=false)
+    agentic:
+      _target_: shinka.core.runner.AgenticEvaluatorConfig
+      sandbox: "workspace-write"
+      approval_mode: "full-auto"
+      max_events: 80
+      extra_cli_config:
+        model: "gpt-5.1-codex-mini"
+        model_reasoning_effort: "high"
+
+    # Ensemble configuration
+    ensemble:
+      _target_: shinka.core.runner.EnsembleEvaluatorConfig
+      enabled: true
+
+      # Default settings inherited by all evaluators (unless overridden)
+      defaults:
+        _target_: shinka.core.runner.EvaluatorInstanceConfig
+        backend: "codex"
+        sandbox: "workspace-write"
+        approval_mode: "full-auto"
+        max_events: 80
+
+      # Aggregation strategy
+      aggregation:
+        _target_: shinka.core.runner.AggregationConfig
+        strategy: "weighted_average"  # best_score | worst_case | average | weighted_average | majority_vote | median
+        vote_threshold: 0.5  # For majority_vote: fraction required for "correct"
+        min_successful_evals: 1  # Minimum successful evaluators for valid result
+        failure_mode: "ignore"  # ignore | zero | fail
+
+      # Maximum parallel evaluators per program (0 = no limit)
+      max_parallel_evaluators: 0
+
+      # Named evaluators
+      evaluators:
+        primary:
+          _target_: shinka.core.runner.EvaluatorInstanceConfig
+          name: "primary"
+          backend: "codex"
+          weight: 2.0
+          max_events: 80
+          eval_prompt: |
+            Evaluate this code for correctness, efficiency, and code quality.
+            Run the provided tests and report the results.
+            Score based on test pass rate and code quality.
+          extra_cli_config:
+            model: "gpt-5.1-codex-mini"
+
+        creative:
+          _target_: shinka.core.runner.EvaluatorInstanceConfig
+          name: "creative"
+          backend: "gemini"
+          weight: 1.0
+          max_events: 60
+          eval_prompt: |
+            Evaluate this code with a focus on creative problem-solving.
+            Award partial credit for novel approaches even if tests don't fully pass.
+            Consider edge cases the tests might not cover.
+          extra_cli_config:
+            model: "gemini-2.5-flash"
+
+        # Additional evaluators can be added here:
+        # adversarial:
+        #   _target_: shinka.core.runner.EvaluatorInstanceConfig
+        #   name: "adversarial"
+        #   backend: "claude"
+        #   weight: 1.5
+        #   max_events: 100
+        #   eval_prompt: |
+        #     Be skeptical. Look for edge cases, potential bugs, and failure modes.
+        #     Score harshly unless the code handles all edge cases properly.

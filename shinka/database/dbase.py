@@ -459,6 +459,14 @@ class ProgramDatabase:
             "programs(children_count)",
             "CREATE INDEX IF NOT EXISTS idx_programs_island_idx ON "
             "programs(island_idx)",
+            # Performance indexes for common query patterns
+            "CREATE INDEX IF NOT EXISTS idx_programs_correct ON programs(correct)",
+            "CREATE INDEX IF NOT EXISTS idx_programs_combined_score ON "
+            "programs(combined_score)",
+            "CREATE INDEX IF NOT EXISTS idx_programs_correct_island ON "
+            "programs(correct, island_idx)",
+            "CREATE INDEX IF NOT EXISTS idx_programs_correct_score ON "
+            "programs(correct, combined_score DESC)",
         ]
         for cmd in idx_cmds:
             self.cursor.execute(cmd)
@@ -936,24 +944,58 @@ class ProgramDatabase:
         if not self.cursor:
             raise ConnectionError("DB not connected.")
 
-        # Check if all islands are initialized
-        if not self.island_manager.are_all_islands_initialized():
-            # Get initial program (first program in database)
-            self.cursor.execute("SELECT * FROM programs ORDER BY timestamp ASC LIMIT 1")
-            row = self.cursor.fetchone()
-            if not row:
+        # Get initialized islands (islands with at least one correct program)
+        initialized_islands = self.island_manager.get_initialized_islands()
+        num_islands = getattr(self.config, "num_islands", 0)
+
+        def _sample_any_parent(island_idx: Optional[int]) -> Program:
+            """Sample a parent from a specific island without requiring correctness.
+
+            This is used to bootstrap islands before they have any correct programs.
+            We pick the most recent program on that island (highest generation / latest timestamp).
+            Falls back to the earliest program in the DB if the island is empty.
+            """
+            if island_idx is not None:
+                self.cursor.execute(
+                    """SELECT * FROM programs
+                       WHERE island_idx = ?
+                       ORDER BY generation DESC, timestamp DESC
+                       LIMIT 1""",
+                    (island_idx,),
+                )
+                row_any = self.cursor.fetchone()
+                if row_any:
+                    prog_any = self._program_from_row(row_any)
+                    if prog_any:
+                        return prog_any
+
+            # Global fallback to initial program
+            self.cursor.execute(
+                "SELECT * FROM programs ORDER BY timestamp ASC LIMIT 1"
+            )
+            row_init = self.cursor.fetchone()
+            if not row_init:
                 raise RuntimeError("No programs found in database")
-
-            parent = self._program_from_row(row)
-            if not parent:
+            prog_init = self._program_from_row(row_init)
+            if not prog_init:
                 raise RuntimeError("Failed to load initial program")
+            return prog_init
 
+        # Bootstrap phase: if NO islands have correct programs yet, we still
+        # start evolving all islands by sampling parents without correctness.
+        if not initialized_islands:
+            if num_islands and num_islands > 0:
+                sampled_island = random.randint(0, num_islands - 1)
+            else:
+                sampled_island = 0
+
+            parent = _sample_any_parent(sampled_island)
             logger.info(
-                f"Not all islands initialized. Using initial program {parent.id} "
-                "without inspirations."
+                f"No islands initialized yet. Bootstrapping from island "
+                f"{sampled_island} using parent {parent.id} "
+                "(allowing incorrect parents, no inspirations)."
             )
 
-            # Print sampling summary
             self._print_sampling_summary_helper(
                 parent,
                 [],
@@ -967,9 +1009,40 @@ class ProgramDatabase:
 
             return parent, [], []
 
-        # All islands initialized - sample island + constrain parents
-        initialized_islands = self.island_manager.get_initialized_islands()
-        sampled_island = random.choice(initialized_islands)
+        # If some islands are still uninitialized (no correct programs),
+        # keep them evolving by sometimes sampling from any island. When we
+        # pick an uninitialized island we allow incorrect parents and skip inspirations.
+        if (
+            num_islands
+            and num_islands > 0
+            and not self.island_manager.are_all_islands_initialized()
+        ):
+            all_islands = list(range(num_islands))
+            sampled_island = random.choice(all_islands)
+            if sampled_island not in initialized_islands:
+                parent = _sample_any_parent(sampled_island)
+                logger.info(
+                    f"Partial island initialization ({len(initialized_islands)} of "
+                    f"{num_islands} islands). Sampled uninitialized island "
+                    f"{sampled_island}; using parent {parent.id} "
+                    "(may be incorrect, no inspirations)."
+                )
+
+                self._print_sampling_summary_helper(
+                    parent,
+                    [],
+                    [],
+                    target_generation,
+                    novelty_attempt,
+                    max_novelty_attempts,
+                    resample_attempt,
+                    max_resample_attempts,
+                )
+
+                return parent, [], []
+        else:
+            # All islands initialized -> sample only from initialized islands.
+            sampled_island = random.choice(initialized_islands)
 
         logger.debug(f"Sampling from island {sampled_island}")
 
@@ -984,6 +1057,7 @@ class ProgramDatabase:
             last_iteration=self.last_iteration,
             update_metadata_func=self._update_metadata_in_db,
             get_best_program_func=self.get_best_program,
+            program_from_row_func=self._program_from_row,
         )
 
         parent = parent_selector.sample_parent(island_idx=sampled_island)
@@ -1088,71 +1162,81 @@ class ProgramDatabase:
                     self._update_metadata_in_db("best_program_id", None)
                 self.best_program_id = None
 
-        # Fetch only correct programs and sort in Python.
-        self.cursor.execute("SELECT * FROM programs WHERE correct = 1")
-        all_rows = self.cursor.fetchall()
-        if not all_rows:
-            logger.debug("No correct programs found in database.")
-            return None
-
-        programs = []
-        for row_data in all_rows:
-            p_dict = dict(row_data)
-            p_dict["public_metrics"] = (
-                json.loads(p_dict["public_metrics"])
-                if p_dict.get("public_metrics")
-                else {}
-            )
-            p_dict["private_metrics"] = (
-                json.loads(p_dict["private_metrics"])
-                if p_dict.get("private_metrics")
-                else {}
-            )
-            p_dict["metadata"] = (
-                json.loads(p_dict["metadata"]) if p_dict.get("metadata") else {}
-            )
-            programs.append(Program.from_dict(p_dict))
-
-        if not programs:
-            return None
-
-        sorted_p: List[Program] = []
-        log_key = "average metrics"
-
+        # For custom metrics, need to load all programs and sort in Python
         if metric:
-            progs_with_metric = [
-                p for p in programs if p.public_metrics and metric in p.public_metrics
-            ]
-            sorted_p = sorted(
-                progs_with_metric,
+            self.cursor.execute(
+                "SELECT * FROM programs WHERE correct = 1 AND public_metrics IS NOT NULL"
+            )
+            all_rows = self.cursor.fetchall()
+            if not all_rows:
+                logger.debug("No correct programs found in database.")
+                return None
+
+            programs = []
+            for row_data in all_rows:
+                p = self._program_from_row(row_data)
+                if p and p.public_metrics and metric in p.public_metrics:
+                    programs.append(p)
+
+            if not programs:
+                logger.debug(
+                    f"No correct programs with metric '{metric}' for get_best_program."
+                )
+                return None
+
+            best_overall = max(
+                programs,
                 key=lambda p_item: p_item.public_metrics.get(metric, -float("inf")),
-                reverse=True,
             )
             log_key = f"metric '{metric}'"
-        elif any(p.combined_score is not None for p in programs):
-            progs_with_cs = [p for p in programs if p.combined_score is not None]
-            sorted_p = sorted(
-                progs_with_cs,
-                key=lambda p_item: p_item.combined_score or -float("inf"),
-                reverse=True,
-            )
-            log_key = "combined_score"
         else:
-            progs_with_metrics = [p for p in programs if p.public_metrics]
-            sorted_p = sorted(
-                progs_with_metrics,
-                key=lambda p_item: sum(p_item.public_metrics.values())
-                / len(p_item.public_metrics)
-                if p_item.public_metrics
-                else -float("inf"),
-                reverse=True,
+            # Default path: use SQL ORDER BY ... LIMIT 1 for efficiency
+            self.cursor.execute(
+                """
+                SELECT * FROM programs
+                WHERE correct = 1 AND combined_score IS NOT NULL
+                ORDER BY combined_score DESC
+                LIMIT 1
+                """
             )
+            row = self.cursor.fetchone()
 
-        if not sorted_p:
+            if row:
+                best_overall = self._program_from_row(row)
+                log_key = "combined_score"
+            else:
+                # Fallback: try average of public_metrics if no combined_score
+                self.cursor.execute(
+                    "SELECT * FROM programs WHERE correct = 1 AND public_metrics IS NOT NULL"
+                )
+                all_rows = self.cursor.fetchall()
+                if not all_rows:
+                    logger.debug("No correct programs found in database.")
+                    return None
+
+                programs = [self._program_from_row(r) for r in all_rows]
+                programs = [p for p in programs if p and p.public_metrics]
+
+                if not programs:
+                    logger.debug(
+                        "No correct programs matched criteria for get_best_program."
+                    )
+                    return None
+
+                best_overall = max(
+                    programs,
+                    key=lambda p_item: (
+                        sum(p_item.public_metrics.values()) / len(p_item.public_metrics)
+                        if p_item.public_metrics
+                        else -float("inf")
+                    ),
+                )
+                log_key = "average metrics"
+
+        if not best_overall:
             logger.debug("No correct programs matched criteria for get_best_program.")
             return None
 
-        best_overall = sorted_p[0]
         logger.debug(f"Best correct program by {log_key}: {best_overall.id}")
 
         if self.best_program_id != best_overall.id:  # Update ID if different

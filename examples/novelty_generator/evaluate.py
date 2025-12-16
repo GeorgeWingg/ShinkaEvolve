@@ -135,13 +135,13 @@ def evaluate_with_lm_judge(
     minutes = int((elapsed % 3600) // 60)
     seconds = int(elapsed % 60)
     print(f"Completed after {hours}h {minutes}m {seconds}s")
-    # Save correct to JSON file
-    correct_file = os.path.join(results_dir, "correct.json")
-    with open(correct_file, "w") as f:
-        json.dump({"correct": correct, "error": error}, f, indent=4)
-    print(f"Correct saved to {correct_file}")
+    
+    # Consolidate correct into metrics.json
+    metrics["correct"] = correct
+    if error:
+        metrics["details"] = error
 
-    # Save metrics to JSON file
+    # Save metrics to JSON file (consolidated schema)
     metrics_file = os.path.join(
         results_dir,
         "metrics.json",

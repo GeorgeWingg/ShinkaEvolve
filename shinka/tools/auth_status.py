@@ -1,8 +1,8 @@
 """Consolidated authentication status detection for all agentic backends.
 
-This module provides unified auth checking for Codex, Gemini, Claude, and ShinkaAgent
-backends. It's used by the BackendBandit to determine which backends are available
-for selection.
+This module provides unified auth checking for Codex, Gemini, Claude, ShinkaAgent,
+and Jules backends. It's used by the BackendBandit to determine which backends
+are available for selection.
 """
 
 from __future__ import annotations
@@ -17,10 +17,13 @@ from shinka.edit.codex_cli import CodexUnavailableError, ensure_codex_available
 from shinka.edit.gemini_cli import GeminiUnavailableError, ensure_gemini_available
 from shinka.edit.claude_cli import ClaudeUnavailableError, ensure_claude_available
 from shinka.edit.shinka_agent import ShinkaUnavailableError, ensure_shinka_available
+from shinka.edit.jules_cli import JulesUnavailableError
+from shinka.edit.jules_api import ensure_jules_api_key, JulesAPIClient
+from shinka.edit.jules_sync import get_github_token
 
 
 # All supported backends
-ALL_BACKENDS = ["codex", "gemini", "claude", "shinka"]
+ALL_BACKENDS = ["codex", "gemini", "claude", "shinka", "jules", "openrouter"]
 
 
 @dataclass
@@ -129,9 +132,26 @@ def check_gemini_auth() -> BackendAuthStatus:
         ]
 
         # Also check environment variable
-        has_api_key = bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+        has_api_key = bool(
+            os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        )
 
         auth_found = has_api_key or any(p.exists() for p in possible_auth_paths)
+
+        # Best-effort fallback: unified credential store (API-key mode).
+        # OAuth/subscription remains the primary expected path.
+        if not auth_found:
+            try:
+                from shinka.tools.credentials import get_api_key
+
+                stored_key = get_api_key("gemini")
+                if stored_key:
+                    # Prefer GEMINI_API_KEY for gemini-cli key mode.
+                    os.environ.setdefault("GEMINI_API_KEY", stored_key)
+                    has_api_key = True
+                    auth_found = True
+            except Exception:
+                pass
 
         if not auth_found:
             return BackendAuthStatus(
@@ -221,9 +241,23 @@ def check_claude_auth() -> BackendAuthStatus:
         
         # Also check environment variable
         has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        
+
         auth_found = has_api_key or any(p.exists() for p in possible_auth_paths)
-        
+
+        # Best-effort fallback: unified credential store (API-key mode).
+        # OAuth/subscription remains the primary expected path.
+        if not auth_found:
+            try:
+                from shinka.tools.credentials import get_api_key
+
+                stored_key = get_api_key("claude")
+                if stored_key:
+                    os.environ.setdefault("ANTHROPIC_API_KEY", stored_key)
+                    has_api_key = True
+                    auth_found = True
+            except Exception:
+                pass
+
         if not auth_found:
             return BackendAuthStatus(
                 backend="claude",
@@ -290,15 +324,110 @@ def check_shinka_auth() -> BackendAuthStatus:
         )
 
 
+def check_jules_auth() -> BackendAuthStatus:
+    """Check if Jules API key is configured.
+
+    Jules requires:
+    1. JULES_API_KEY environment variable
+    2. GITHUB_TOKEN environment variable (for sync)
+
+    Note: Jules also requires repos to be "connected" in the Jules UI,
+    but we can't check that without knowing the target repo.
+
+    Returns:
+        BackendAuthStatus with availability info
+    """
+    try:
+        # Check for Jules API key
+        api_key = ensure_jules_api_key()
+
+        # Check for GitHub token (required for sync)
+        github_token = get_github_token()
+
+        if not github_token:
+            return BackendAuthStatus(
+                backend="jules",
+                available=False,
+                error="GITHUB_TOKEN not set. Required for GitHub sync with Jules.",
+            )
+
+        # Try to get subscription tier by calling list_sources
+        plan = "Subscription"
+        try:
+            client = JulesAPIClient(api_key)
+            sources = client.list_sources()
+            # Count connected repos as indicator
+            num_repos = len(sources)
+            plan = f"Subscription ({num_repos} repos connected)"
+        except Exception:
+            # Best-effort tier detection
+            pass
+
+        return BackendAuthStatus(
+            backend="jules",
+            available=True,
+            plan=plan,
+        )
+
+    except JulesUnavailableError as e:
+        return BackendAuthStatus(
+            backend="jules",
+            available=False,
+            error=str(e),
+        )
+    except Exception as e:
+        return BackendAuthStatus(
+            backend="jules",
+            available=False,
+            error=f"Jules auth check failed: {e}",
+        )
+
+
+def check_openrouter_auth() -> BackendAuthStatus:
+    """Check if OpenRouter API key is configured.
+
+    OpenRouter is available if OPENROUTER_API_KEY is set.
+
+    Returns:
+        BackendAuthStatus with availability info
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+
+    # Best-effort fallback: unified credential store
+    if not api_key:
+        try:
+            from shinka.tools.credentials import get_api_key
+
+            stored_key = get_api_key("openrouter")
+            if stored_key:
+                os.environ.setdefault("OPENROUTER_API_KEY", stored_key)
+                api_key = stored_key
+        except Exception:
+            pass
+
+    if not api_key:
+        return BackendAuthStatus(
+            backend="openrouter",
+            available=False,
+            error="OPENROUTER_API_KEY not set.",
+        )
+
+    return BackendAuthStatus(
+        backend="openrouter",
+        available=True,
+        plan="API Key",
+    )
+
+
 def check_backend_auth(backend: str) -> BackendAuthStatus:
     """Check auth status for a specific backend.
-    
+
     Args:
-        backend: One of 'codex', 'gemini', 'claude', 'shinka'
-        
+        backend: One of 'codex', 'gemini', 'claude', 'shinka', 'jules', 'openrouter'
+
     Returns:
         BackendAuthStatus for the requested backend
-        
+
     Raises:
         ValueError: If backend is not recognized
     """
@@ -307,6 +436,8 @@ def check_backend_auth(backend: str) -> BackendAuthStatus:
         "gemini": check_gemini_auth,
         "claude": check_claude_auth,
         "shinka": check_shinka_auth,
+        "jules": check_jules_auth,
+        "openrouter": check_openrouter_auth,
     }
     
     if backend not in checkers:
@@ -317,7 +448,7 @@ def check_backend_auth(backend: str) -> BackendAuthStatus:
 
 def get_all_backend_statuses() -> List[BackendAuthStatus]:
     """Get auth status for all backends.
-    
+
     Returns:
         List of BackendAuthStatus, one per backend
     """
@@ -326,6 +457,8 @@ def get_all_backend_statuses() -> List[BackendAuthStatus]:
         check_gemini_auth(),
         check_claude_auth(),
         check_shinka_auth(),
+        check_jules_auth(),
+        check_openrouter_auth(),
     ]
 
 

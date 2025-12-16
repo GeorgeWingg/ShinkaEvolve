@@ -30,7 +30,18 @@ KEYRING_SERVICE = "shinka"
 KEYRING_KEY_NAME = "credentials_encryption_key"
 
 # Providers supported by the unified system
-PROVIDERS = ["codex", "gemini", "claude", "shinka", "deepseek", "openrouter", "azure"]
+# Note: "github" is a non-LLM credential used for Jules repo sync.
+PROVIDERS = [
+    "codex",
+    "gemini",
+    "claude",
+    "shinka",
+    "jules",
+    "github",
+    "deepseek",
+    "openrouter",
+    "azure",
+]
 
 # Map provider names to their environment variable equivalents
 ENV_VAR_MAP = {
@@ -38,6 +49,8 @@ ENV_VAR_MAP = {
     "gemini": "GEMINI_API_KEY",
     "claude": "ANTHROPIC_API_KEY",
     "shinka": "SHINKA_API_KEY",  # Or specific shinka vars
+    "jules": "JULES_API_KEY",
+    "github": "GITHUB_TOKEN",
     "deepseek": "DEEPSEEK_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
@@ -337,3 +350,73 @@ def is_encryption_available() -> bool:
         return True
     except (RuntimeError, ImportError):
         return False
+
+
+# --- Custom Provider Storage ---
+
+def get_custom_providers() -> Dict[str, dict]:
+    """
+    Get all custom provider configurations.
+
+    Custom providers are stored under the "custom_providers" key in the
+    credential store, as a dict of provider_id -> config.
+
+    Returns:
+        Dict mapping provider_id to config dict with keys:
+        - name: Display name
+        - env_var: Environment variable name for API key
+        - base_url: Base URL for OpenAI-compatible API
+        - models: List of model names available
+        - placeholder: Optional placeholder text for UI
+    """
+    store = load_credentials_store()
+    return store.get("custom_providers", {})
+
+
+def save_custom_provider(provider_id: str, config: dict) -> None:
+    """
+    Save a custom provider configuration.
+
+    Args:
+        provider_id: Unique identifier (e.g., "lmstudio", "ollama")
+        config: Dict with keys: name, env_var, base_url, models, placeholder
+    """
+    store = load_credentials_store()
+    if "custom_providers" not in store:
+        store["custom_providers"] = {}
+    store["custom_providers"][provider_id] = config
+    save_credentials_store(store)
+
+
+def remove_custom_provider(provider_id: str) -> bool:
+    """
+    Remove a custom provider configuration.
+
+    Args:
+        provider_id: The provider ID to remove
+
+    Returns:
+        True if removed, False if not found
+    """
+    store = load_credentials_store()
+    custom = store.get("custom_providers", {})
+    if provider_id in custom:
+        del custom[provider_id]
+        store["custom_providers"] = custom
+        save_credentials_store(store)
+        return True
+    return False
+
+
+def get_custom_provider(provider_id: str) -> Optional[dict]:
+    """
+    Get a specific custom provider configuration.
+
+    Args:
+        provider_id: The provider ID
+
+    Returns:
+        Config dict or None if not found
+    """
+    custom = get_custom_providers()
+    return custom.get(provider_id)

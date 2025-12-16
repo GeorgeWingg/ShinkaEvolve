@@ -210,6 +210,24 @@ The WebUI automatically refreshes to show new data:
 - **Notifications**: Alerts for significant events
 - **Auto-scroll**: Follow latest generations
 
+### 7. Run Evolved Code (Agentic Evaluator)
+
+For runs that use the **agentic evaluator**, each generation’s `metrics.json`
+may include a human‑runnable launch command under:
+
+- `private.run_command` — a single shell command to run/demo the evolved program  
+- `private.run_workdir` — optional relative working directory (e.g., `best`, `gen_7`)  
+- `private.run_notes` — optional brief warnings/notes
+
+The Meta tab surfaces a **“▶ Run evolved code”** button that:
+
+- **Executes the recorded command** for the best solution (or the selected node if it has a command).  
+- **Shows a safety confirmation modal** with the exact command and working directory.  
+- **Captures logs per click** under `manual_runs/<timestamp>/job_log.out` and `job_log.err` in the run folder.
+
+If no `private.run_command` is recorded (common for legacy/deterministic evaluators),
+the button is disabled and indicates that agentic evaluation is required.
+
 ## Remote Access
 
 ### SSH Tunneling

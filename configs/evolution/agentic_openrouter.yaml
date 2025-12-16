@@ -1,0 +1,43 @@
+# OpenRouter agentic configuration
+#
+# Use this config to run evolution with OpenRouter models.
+# OpenRouter provides access to 300+ models from multiple providers.
+#
+# Requirements:
+#   - Set OPENROUTER_API_KEY environment variable
+#   - Browse available models at: https://openrouter.ai/models
+#
+# Usage:
+#   uv run shinka_launch evolution=agentic_openrouter task=circle_packing
+#
+# Override model:
+#   uv run shinka_launch evolution=agentic_openrouter \
+#     evo_config.llm_models="[openrouter/deepseek/deepseek-r1]"
+
+defaults:
+  - agentic
+
+evo_config:
+  agentic_mode: true
+  agentic:
+    # Use ShinkaAgent backend which supports OpenRouter models
+    backend: "shinka"
+    extra_cli_config:
+      # Default to Llama 3.3 70B - good balance of capability and cost
+      model: "openrouter/meta-llama/llama-3.3-70b-instruct"
+
+  # Alternative models to consider (uncomment one):
+  # llm_models:
+  #   - "openrouter/anthropic/claude-3.5-sonnet"    # Top reasoning
+  #   - "openrouter/deepseek/deepseek-r1"           # Excellent reasoning, low cost
+  #   - "openrouter/google/gemini-2.0-flash-exp"    # Fast, free tier available
+  #   - "openrouter/qwen/qwen-2.5-72b-instruct"     # Strong Chinese model
+  #   - "openrouter/mistralai/mistral-large-2411"   # European alternative
+  #   - "openrouter/x-ai/grok-2-1212"               # xAI's model
+
+  evaluator:
+    mode: auto
+    agentic:
+      extra_cli_config:
+        # Use a smaller/cheaper model for evaluation
+        model: "openrouter/deepseek/deepseek-chat"

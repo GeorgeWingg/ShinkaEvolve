@@ -16,7 +16,6 @@ Reference: https://github.com/SWE-agent/mini-swe-agent
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -64,7 +63,7 @@ COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
 Example response:
 I'll read the current file first.
 ```bash
-cat main.py
+ls
 ```
 
 After seeing the output, make targeted edits to improve the score.
@@ -174,6 +173,7 @@ def run_shinka_task(
     cli_path: Optional[str] = None,  # Alias for codex_path (unused for ShinkaAgent)
     resume_session_id: Optional[str] = None,
     session_kind: str = "unknown",
+    registry_workdir: Optional[Path] = None,
     # Metadata params for session registry tracking
     parent_id: Optional[str] = None,
     generation: Optional[int] = None,
@@ -254,7 +254,7 @@ def run_shinka_task(
     register_session_process(
         pseudo_pid,
         prompt_preview=user_prompt[:160],
-        workdir=workdir,
+        workdir=registry_workdir or workdir,
         session_kind=session_kind,
         parent_id=parent_id,
         generation=generation,

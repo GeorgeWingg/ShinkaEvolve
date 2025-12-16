@@ -5,7 +5,7 @@
 # Usage:
 #   uv run shinka_launch evolution@_global_=agentic_bandit
 #
-# This enables Thompson Sampling / UCB for selecting between backends
+# This enables Asymmetric UCB1 bandit for selecting between backends
 # (Gemini, Claude, ShinkaAgent) based on their mutation performance.
 #
 # ShinkaAgent is model-agnostic - set the model via extra_cli_config.model

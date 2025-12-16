@@ -77,6 +77,7 @@ def run_gemini_task(
     cli_path: Optional[str] = None,  # Alias for codex_path
     resume_session_id: Optional[str] = None,
     session_kind: str = "unknown",
+    registry_workdir: Optional[Path] = None,
     # Metadata params (unused but accepted for API compat with agentic.py)
     parent_id: Optional[str] = None,
     generation: Optional[int] = None,
@@ -189,269 +190,325 @@ def run_gemini_task(
     max_retries = 5
     attempt = 0
 
-    while True:
-        attempt += 1
-        start_time = time.monotonic()
-        events_emitted = 0
-        session_id: Optional[str] = None
+    # Gemini CLI v0.20+ expects the prompt as a positional argument (one-shot mode).
+    # Passing a prompt only via stdin without --prompt/positional args can hang in
+    # interactive mode and emit zero JSON events. To avoid ARG_MAX issues on very
+    # large prompts, fall back to stdin + deprecated --prompt "" when needed.
+    max_prompt_arg_chars_raw = extra_cli_config.get("max_prompt_arg_chars")
+    try:
+        max_prompt_arg_chars = (
+            int(max_prompt_arg_chars_raw)
+            if max_prompt_arg_chars_raw not in (None, "")
+            else 200_000
+        )
+    except (TypeError, ValueError):
+        max_prompt_arg_chars = 200_000
+    use_stdin_prompt = bool(full_prompt) and len(full_prompt) > max_prompt_arg_chars
 
-        # Token tracking: prefer real counts from result event (Gemini CLI v0.11+)
-        # Fall back to character-based estimation if stats not available
-        estimated_input_tokens = len(full_prompt) // 4 if full_prompt else 0
-        estimated_output_tokens = 0
-        # Real token counts from Gemini CLI result event (None until received)
-        real_input_tokens: Optional[int] = None
-        real_output_tokens: Optional[int] = None
-        real_total_tokens: Optional[int] = None
-        duration_ms: Optional[int] = None
+    prompt_temp_path: Optional[str] = None
+    if use_stdin_prompt:
+        import os
+        import tempfile
 
-        # Pass prompt as positional argument; stdin streaming has caused hangs in
-        # stream-json mode. This mirrors the CLI usage that works interactively.
-        if full_prompt:
-            cmd_with_prompt = cmd + [full_prompt]
-        else:
+        try:
+            fd, prompt_temp_path = tempfile.mkstemp(prefix="gemini_prompt_", text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(full_prompt)
+            logger.warning(
+                "Prompt length (%s chars) exceeds max_prompt_arg_chars=%s; "
+                "passing prompt via stdin with deprecated --prompt flag.",
+                len(full_prompt),
+                max_prompt_arg_chars,
+            )
+        except Exception as e:
+            logger.error(f"Failed to create prompt temp file: {e}")
+            raise GeminiExecutionError(f"Failed to create prompt temp file: {e}")
+
+    try:
+        while True:
+            attempt += 1
+            start_time = time.monotonic()
+            events_emitted = 0
+            session_id: Optional[str] = None
+
+            # Token tracking: prefer real counts from result event (Gemini CLI v0.11+)
+            # Fall back to character-based estimation if stats not available
+            estimated_input_tokens = len(full_prompt) // 4 if full_prompt else 0
+            estimated_output_tokens = 0
+            # Real token counts from Gemini CLI result event (None until received)
+            real_input_tokens: Optional[int] = None
+            real_output_tokens: Optional[int] = None
+            real_total_tokens: Optional[int] = None
+            duration_ms: Optional[int] = None
+
+            prompt_file_handle = None
             cmd_with_prompt = cmd[:]
 
-        env = {**subprocess.os.environ, "NO_COLOR": "1"}
-        if extra_cli_config.get("no_extensions"):
-            env["GEMINI_NO_EXTENSIONS"] = "1"
-        # Set GEMINI_SYSTEM_MD to point to the system prompt file
-        if shinka_sys_path:
-            env["GEMINI_SYSTEM_MD"] = shinka_sys_path
-            logger.debug(f"Set GEMINI_SYSTEM_MD={shinka_sys_path}")
-
-        # Check if sandbox should be disabled from selected profile
-        try:
-            from shinka.webui.cli_profiles import get_selected_profiles_manager
-            selected_mgr = get_selected_profiles_manager()
-            selection = selected_mgr.get_selected("gemini")
-            if selection.get("sandbox_disabled"):
-                env["GEMINI_SANDBOX"] = "0"
-                logger.debug("Disabled Gemini sandbox via GEMINI_SANDBOX=0")
-        except Exception as e:
-            logger.debug(f"Could not load Gemini selected profile: {e}")
-
-        stdout_capture = None
-        stderr_capture = None
-        if extra_cli_config.get("debug_log"):
-            try:
-                raw_dir = Path(cwd)
-                stdout_capture = raw_dir / "gemini_stdout.log"
-                stderr_capture = raw_dir / "gemini_stderr.log"
-                stdout_capture.touch(exist_ok=True)
-                stderr_capture.touch(exist_ok=True)
-            except Exception:
-                stdout_capture = None
-                stderr_capture = None
-
-        process = subprocess.Popen(
-            cmd_with_prompt,
-            stdin=subprocess.DEVNULL,  # No stdin needed, prevents hangs
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=cwd,
-            env=env,
-        )
-
-        lines = full_prompt.strip().splitlines() if full_prompt else []
-        prompt_preview = lines[0][:160] if lines else ""
-        register_session_process(
-            process.pid,
-            prompt_preview=prompt_preview,
-            workdir=workdir,
-            session_kind=session_kind,
-            parent_id=parent_id,
-            generation=generation,
-            patch_type=patch_type,
-            results_dir=results_dir,
-        )
-
-        pending_tools: Dict[str, Dict[str, Any]] = {}
-
-        try:
-            if not process.stdout:
-                raise GeminiExecutionError("Gemini CLI did not provide stdout pipe.")
-
-            while True:
-                if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
-                    process.kill()
-                    raise GeminiExecutionError(
-                        f"Gemini task exceeded {max_seconds}s timeout."
-                    )
-
-                line = process.stdout.readline()
-                if not line:
-                    if process.poll() is not None:
-                        # Prefer real token counts from result event (Gemini CLI v0.11+)
-                        # Fall back to character-based estimation for older versions
-                        final_input = real_input_tokens if real_input_tokens is not None else estimated_input_tokens
-                        final_output = real_output_tokens if real_output_tokens is not None else estimated_output_tokens
-                        final_total = real_total_tokens if real_total_tokens is not None else (final_input + final_output)
-
-                        is_estimated = real_input_tokens is None
-                        if is_estimated:
-                            logger.debug(
-                                "Using estimated tokens (Gemini CLI v0.11+ recommended for accurate counts)"
-                            )
-
-                        yield {
-                            "type": "usage",
-                            "session_id": session_id,
-                            "usage": {
-                                "input_tokens": final_input,
-                                "output_tokens": final_output,
-                                "total_tokens": final_total,
-                                "total_cost_usd": calculate_cost(
-                                    model_name,
-                                    final_input,
-                                    final_output,
-                                    "gemini",
-                                ),
-                                "estimated": is_estimated,  # Flag to indicate if tokens were estimated
-                                "duration_ms": duration_ms,
-                            },
-                            "model": model_name,
-                        }
-                        return
-                    time.sleep(0.05)
-                    continue
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                if stdout_capture:
-                    try:
-                        with stdout_capture.open("a", encoding="utf-8") as f:
-                            f.write(line + "\n")
-                    except Exception:
-                        pass
-
+            if full_prompt and not use_stdin_prompt:
+                # Preferred path: positional prompt (one-shot mode)
+                cmd_with_prompt.append(full_prompt)
+            elif full_prompt and use_stdin_prompt:
+                # Fallback path: stdin prompt + deprecated --prompt to force non-interactive mode
+                cmd_with_prompt.extend(["--prompt", ""])
                 try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+                    prompt_file_handle = open(prompt_temp_path, "r", encoding="utf-8")  # type: ignore[arg-type]
+                except Exception as e:
+                    logger.error(f"Failed to open prompt temp file for reading: {e}")
+                    raise GeminiExecutionError(f"Failed to open prompt temp file: {e}")
 
-                events_emitted += 1
-                if max_events and events_emitted > max_events:
-                    process.kill()
-                    raise GeminiExecutionError(
-                        "Gemini emitted more events than allowed."
-                    )
+            env = {**subprocess.os.environ, "NO_COLOR": "1"}
+            if extra_cli_config.get("no_extensions"):
+                env["GEMINI_NO_EXTENSIONS"] = "1"
+            # Set GEMINI_SYSTEM_MD to point to the system prompt file
+            if shinka_sys_path:
+                env["GEMINI_SYSTEM_MD"] = shinka_sys_path
+                logger.debug(f"Set GEMINI_SYSTEM_MD={shinka_sys_path}")
 
-                event_type = event.get("type")
+            # Check if sandbox should be disabled from selected profile
+            try:
+                from shinka.webui.cli_profiles import get_selected_profiles_manager
+                selected_mgr = get_selected_profiles_manager()
+                selection = selected_mgr.get_selected("gemini")
+                if selection.get("sandbox_disabled"):
+                    env["GEMINI_SANDBOX"] = "0"
+                    logger.debug("Disabled Gemini sandbox via GEMINI_SANDBOX=0")
+            except Exception as e:
+                logger.debug(f"Could not load Gemini selected profile: {e}")
 
-                if event_type == "init":
-                    sid = event.get("session_id")
-                    if sid:
-                        session_id = sid
-                        update_session_process(process.pid, session_id=sid)
-                    yield event
+            stdout_capture = None
+            stderr_capture = None
+            if extra_cli_config.get("debug_log"):
+                try:
+                    raw_dir = Path(cwd)
+                    stdout_capture = raw_dir / "gemini_stdout.log"
+                    stderr_capture = raw_dir / "gemini_stderr.log"
+                    stdout_capture.touch(exist_ok=True)
+                    stderr_capture.touch(exist_ok=True)
+                except Exception:
+                    stdout_capture = None
+                    stderr_capture = None
 
-                elif event_type == "message":
-                    role = event.get("role")
-                    if role == "assistant":
-                        content = event.get("content")
-                        if content:
-                            estimated_output_tokens += len(content) // 4
-                            yield {
-                                "type": "agent_message",
-                                "item": {
-                                    "type": "agent_message",
-                                    "text": content
-                                },
-                                "session_id": event.get("session_id")
-                            }
+            process = subprocess.Popen(
+                cmd_with_prompt,
+                stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=cwd,
+                env=env,
+            )
 
-                elif event_type == "tool_use":
-                    tool_id = event.get("tool_id")
-                    if tool_id:
-                        pending_tools[tool_id] = {
-                            "name": event.get("tool_name"),
-                            "args": event.get("parameters")
-                        }
-                    yield event
+            # Close our handle to the file; Popen has its own
+            if prompt_file_handle:
+                prompt_file_handle.close()
 
-                elif event_type == "tool_result":
-                    tool_id = event.get("tool_id")
-                    tool_info = pending_tools.pop(tool_id, {"name": "unknown", "args": {}})
+            lines = full_prompt.strip().splitlines() if full_prompt else []
+            prompt_preview = lines[0][:160] if lines else ""
+            register_session_process(
+                process.pid,
+                prompt_preview=prompt_preview,
+                workdir=registry_workdir or workdir,
+                session_kind=session_kind,
+                parent_id=parent_id,
+                generation=generation,
+                patch_type=patch_type,
+                results_dir=results_dir,
+            )
 
-                    status = event.get("status")
-                    is_success = status == "success"
-                    output = event.get("output") or ""
-                    error = event.get("error")
+            pending_tools: Dict[str, Dict[str, Any]] = {}
 
-                    if error:
-                        err_msg = error.get("message", str(error))
-                        if output:
-                            output += f"\nError: {err_msg}"
-                        else:
-                            output = f"Error: {err_msg}"
+            try:
+                if not process.stdout:
+                    raise GeminiExecutionError("Gemini CLI did not provide stdout pipe.")
 
-                    tool_name = tool_info["name"]
-                    args = tool_info["args"]
-                    command_str = f"{tool_name}({json.dumps(args)})"
-                    if tool_name.startswith("run_shell") and "command" in args:
-                        command_str = args["command"]
-
-                    estimated_output_tokens += len(output) // 4
-
-                    yield {
-                        "type": "command_execution",
-                        "item": {
-                            "type": "command_execution",
-                            "command": command_str,
-                            "status": status,
-                            "exit_code": 0 if is_success else 1,
-                            "stdout": output if is_success else "",
-                            "stderr": output if not is_success else ""
-                        },
-                        "session_id": event.get("session_id")
-                    }
-
-                elif event_type == "error":
-                    yield {
-                        "type": "agent_message",
-                        "item": {
-                            "type": "agent_message",
-                            "text": f"SYSTEM ERROR: {event.get('message')}"
-                        }
-                    }
-
-                elif event_type == "result":
-                    # Extract real token counts from Gemini CLI (v0.11+)
-                    # This provides accurate usage data instead of estimation
-                    stats = event.get("stats")
-                    if stats and isinstance(stats, dict):
-                        real_input_tokens = stats.get("input_tokens")
-                        real_output_tokens = stats.get("output_tokens")
-                        real_total_tokens = stats.get("total_tokens")
-                        duration_ms = stats.get("duration_ms")
-                        logger.debug(
-                            f"Gemini result stats: in={real_input_tokens}, "
-                            f"out={real_output_tokens}, total={real_total_tokens}, "
-                            f"duration={duration_ms}ms"
+                while True:
+                    if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
+                        process.kill()
+                        raise GeminiExecutionError(
+                            f"Gemini task exceeded {max_seconds}s timeout."
                         )
 
-        except GeminiExecutionError as exc:
-            if process.poll() is None:
-                process.kill()
-            if attempt < max_retries and "capacity" in str(exc).lower():
-                time.sleep(5 * attempt)
-                continue
-            raise
+                    line = process.stdout.readline()
+                    if not line:
+                        if process.poll() is not None:
+                            # Prefer real token counts from result event (Gemini CLI v0.11+)
+                            # Fall back to character-based estimation for older versions
+                            final_input = real_input_tokens if real_input_tokens is not None else estimated_input_tokens
+                            final_output = real_output_tokens if real_output_tokens is not None else estimated_output_tokens
+                            final_total = real_total_tokens if real_total_tokens is not None else (final_input + final_output)
 
-        finally:
-            if process.poll() is None:
-                process.kill()
-            remove_session_process(process.pid)
+                            is_estimated = real_input_tokens is None
+                            if is_estimated:
+                                logger.debug(
+                                    "Using estimated tokens (Gemini CLI v0.11+ recommended for accurate counts)"
+                                )
 
-            if stderr_capture and process.stderr:
-                try:
-                    err_tail = process.stderr.read()
-                    if err_tail:
-                        with stderr_capture.open("a", encoding="utf-8") as f:
-                            f.write(err_tail)
-                except Exception:
-                    pass
+                            yield {
+                                "type": "usage",
+                                "session_id": session_id,
+                                "usage": {
+                                    "input_tokens": final_input,
+                                    "output_tokens": final_output,
+                                    "total_tokens": final_total,
+                                    "total_cost_usd": calculate_cost(
+                                        model_name,
+                                        final_input,
+                                        final_output,
+                                        "gemini",
+                                    ),
+                                    "estimated": is_estimated,  # Flag to indicate if tokens were estimated
+                                    "duration_ms": duration_ms,
+                                },
+                                "model": model_name,
+                            }
+                            return
+                        time.sleep(0.05)
+                        continue
+
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    if stdout_capture:
+                        try:
+                            with stdout_capture.open("a", encoding="utf-8") as f:
+                                f.write(line + "\n")
+                        except Exception:
+                            pass
+
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    events_emitted += 1
+                    if max_events and events_emitted > max_events:
+                        process.kill()
+                        raise GeminiExecutionError(
+                            "Gemini emitted more events than allowed."
+                        )
+
+                    event_type = event.get("type")
+
+                    if event_type == "init":
+                        sid = event.get("session_id")
+                        if sid:
+                            session_id = sid
+                            update_session_process(process.pid, session_id=sid)
+                        yield event
+
+                    elif event_type == "message":
+                        role = event.get("role")
+                        if role == "assistant":
+                            content = event.get("content")
+                            if content:
+                                estimated_output_tokens += len(content) // 4
+                                yield {
+                                    "type": "agent_message",
+                                    "item": {
+                                        "type": "agent_message",
+                                        "text": content
+                                    },
+                                    "session_id": event.get("session_id")
+                                }
+
+                    elif event_type == "tool_use":
+                        tool_id = event.get("tool_id")
+                        if tool_id:
+                            pending_tools[tool_id] = {
+                                "name": event.get("tool_name"),
+                                "args": event.get("parameters")
+                            }
+                        yield event
+
+                    elif event_type == "tool_result":
+                        tool_id = event.get("tool_id")
+                        tool_info = pending_tools.pop(tool_id, {"name": "unknown", "args": {}})
+
+                        status = event.get("status")
+                        is_success = status == "success"
+                        output = event.get("output") or ""
+                        error = event.get("error")
+
+                        if error:
+                            err_msg = error.get("message", str(error))
+                            if output:
+                                output += f"\nError: {err_msg}"
+                            else:
+                                output = f"Error: {err_msg}"
+
+                        tool_name = tool_info["name"]
+                        args = tool_info["args"]
+                        command_str = f"{tool_name}({json.dumps(args)})"
+                        if tool_name.startswith("run_shell") and "command" in args:
+                            command_str = args["command"]
+
+                        estimated_output_tokens += len(output) // 4
+
+                        yield {
+                            "type": "command_execution",
+                            "item": {
+                                "type": "command_execution",
+                                "command": command_str,
+                                "status": status,
+                                "exit_code": 0 if is_success else 1,
+                                "stdout": output if is_success else "",
+                                "stderr": output if not is_success else ""
+                            },
+                            "session_id": event.get("session_id")
+                        }
+
+                    elif event_type == "error":
+                        yield {
+                            "type": "agent_message",
+                            "item": {
+                                "type": "agent_message",
+                                "text": f"SYSTEM ERROR: {event.get('message')}"
+                            }
+                        }
+
+                    elif event_type == "result":
+                        # Extract real token counts from Gemini CLI (v0.11+)
+                        # This provides accurate usage data instead of estimation
+                        stats = event.get("stats")
+                        if stats and isinstance(stats, dict):
+                            real_input_tokens = stats.get("input_tokens")
+                            real_output_tokens = stats.get("output_tokens")
+                            real_total_tokens = stats.get("total_tokens")
+                            duration_ms = stats.get("duration_ms")
+                            logger.debug(
+                                f"Gemini result stats: in={real_input_tokens}, "
+                                f"out={real_output_tokens}, total={real_total_tokens}, "
+                                f"duration={duration_ms}ms"
+                            )
+
+            except GeminiExecutionError as exc:
+                if process.poll() is None:
+                    process.kill()
+                if attempt < max_retries and "capacity" in str(exc).lower():
+                    time.sleep(5 * attempt)
+                    continue
+                raise
+
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                remove_session_process(process.pid)
+
+                if stderr_capture and process.stderr:
+                    try:
+                        err_tail = process.stderr.read()
+                        if err_tail:
+                            with stderr_capture.open("a", encoding="utf-8") as f:
+                                f.write(err_tail)
+                    except Exception:
+                        pass
+    finally:
+        if prompt_temp_path:
+            try:
+                import os
+
+                if os.path.exists(prompt_temp_path):
+                    os.remove(prompt_temp_path)
+            except Exception:
+                pass

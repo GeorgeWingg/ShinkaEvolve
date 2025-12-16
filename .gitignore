@@ -177,3 +177,19 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Nano Banana generated images (use process_assets.py to process)
+nanobanana-output/
+
+# Gemini clipboard (temporary images)
+.gemini-clipboard/
+
+# Processed assets (generated from nanobanana-output)
+assets/
+
+# Root-level screenshots (temporary)
+*.png
+
+# Test scratch directories
+scratch_*/
+shinka_circle_packing/

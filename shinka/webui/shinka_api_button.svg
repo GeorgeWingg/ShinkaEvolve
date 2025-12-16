@@ -1,0 +1,49 @@
+<svg width="240" height="56" viewBox="0 0 240 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Fish scale pattern -->
+    <pattern id="scalePatternTeal" x="0" y="0" width="16" height="12" patternUnits="userSpaceOnUse">
+      <path d="M0 6 Q8 0 16 6" stroke="rgba(255,255,255,0.18)" stroke-width="1" fill="none"/>
+      <path d="M8 12 Q16 6 24 12" stroke="rgba(255,255,255,0.18)" stroke-width="1" fill="none"/>
+    </pattern>
+
+    <!-- Ocean depth gradient (from option 3) -->
+    <linearGradient id="oceanGradientHybrid" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4fb3bf"/>
+      <stop offset="40%" stop-color="#2d8a9e"/>
+      <stop offset="100%" stop-color="#1a6578"/>
+    </linearGradient>
+
+    <!-- Shimmer effect -->
+    <linearGradient id="shimmerTeal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0)"/>
+      <stop offset="50%" stop-color="rgba(255,255,255,0.12)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+
+    <!-- Drop shadow -->
+    <filter id="dropShadowHybrid" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#1a6578" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Main button body with rounded corners (option 2 shape) -->
+  <rect x="4" y="4" width="232" height="48" rx="12" ry="12" fill="url(#oceanGradientHybrid)" filter="url(#dropShadowHybrid)"/>
+
+  <!-- Scale pattern overlay (option 2 texture) -->
+  <rect x="4" y="4" width="232" height="48" rx="12" ry="12" fill="url(#scalePatternTeal)"/>
+
+  <!-- Shimmer highlight -->
+  <rect x="4" y="4" width="232" height="24" rx="12" ry="12" fill="url(#shimmerTeal)"/>
+
+  <!-- Subtle border -->
+  <rect x="4" y="4" width="232" height="48" rx="12" ry="12" fill="none" stroke="rgba(45,138,158,0.5)" stroke-width="1.5"/>
+
+  <!-- Key icon -->
+  <g transform="translate(68, 17)">
+    <circle cx="8" cy="8" r="6" stroke="white" stroke-width="2" fill="none"/>
+    <path d="M14 8 L24 8 M24 8 L24 14 M20 8 L20 12" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- Text -->
+  <text x="145" y="33" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="white" text-anchor="middle">Use API Key</text>
+</svg>

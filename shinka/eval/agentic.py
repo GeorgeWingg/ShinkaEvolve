@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from shinka.prompts import AGENTIC_EVAL_SYS, AGENTIC_EVAL_USER
 
 if TYPE_CHECKING:  # pragma: no cover
     from shinka.core.runner import AgenticEvaluatorConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,6 +37,9 @@ class AgenticEvaluatorResult:
     session_id: Optional[str]
     session_dir: Path
     elapsed_seconds: float
+    # Prompts sent to the evaluator (for UI display)
+    system_prompt: Optional[str] = None
+    user_prompt: Optional[str] = None
 
 
 class AgenticEvaluator:
@@ -63,6 +69,9 @@ class AgenticEvaluator:
         results_dir: Optional[str] = None,
         eval_prompt: Optional[str] = None,
         max_score: float = 1.0,
+        parent_id: Optional[str] = None,
+        generation: Optional[int] = None,
+        patch_type: Optional[str] = None,
     ) -> AgenticEvaluatorResult:
         session_uuid = uuid.uuid4().hex
         session_dir = eval_sessions_root / session_uuid
@@ -90,6 +99,7 @@ class AgenticEvaluator:
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 workdir=repo_root,
+                registry_workdir=session_dir,
                 profile=self.config.codex_profile,
                 sandbox=self.config.sandbox,
                 approval_mode=self.config.approval_mode,
@@ -99,10 +109,15 @@ class AgenticEvaluator:
                 codex_path=self.config.codex_path,
                 session_kind="eval",
                 results_dir=results_dir,
+                parent_id=parent_id,
+                generation=generation,
+                patch_type=patch_type,
             ):
                 if isinstance(event, dict):
                     json.dump(event, handle)
                     handle.write("\n")
+                    # Flush so /api/session_state sees new events immediately.
+                    handle.flush()
                     session_events.append(event)
                     if resolved_session_id is None:
                         resolved_session_id = _extract_session_id(event)
@@ -138,16 +153,23 @@ class AgenticEvaluator:
             logger.error(f"Failed to parse metrics.json: {e}")
             metrics = {"error": f"Invalid JSON in metrics: {e}"}
 
-        correct_payload: Dict[str, Any] = {}
-        correct_file = results_path / "correct.json"
-        if correct_file.exists():
-            try:
-                correct_payload = json.loads(correct_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse correct.json: {e}")
-                correct_payload = {"correct": False, "error": f"Invalid JSON: {e}"}
-        correct_flag = bool(correct_payload.get("correct", False))
-        error_msg = correct_payload.get("error")
+        # Read 'correct' from metrics.json (consolidated schema)
+        # Fall back to correct.json for backward compatibility with old runs
+        if "correct" in metrics:
+            correct_flag = bool(metrics.get("correct", False))
+            error_msg = metrics.get("details") if not correct_flag else None
+        else:
+            # Backward compatibility: try reading from separate correct.json
+            correct_payload: Dict[str, Any] = {}
+            correct_file = results_path / "correct.json"
+            if correct_file.exists():
+                try:
+                    correct_payload = json.loads(correct_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse correct.json: {e}")
+                    correct_payload = {"correct": False, "error": f"Invalid JSON: {e}"}
+            correct_flag = bool(correct_payload.get("correct", False))
+            error_msg = correct_payload.get("error")
 
         stdout_log = "\n".join((cmd.stdout or "") for cmd in commands if cmd.stdout)
         stderr_log = "\n".join((cmd.stderr or "") for cmd in commands if cmd.stderr)
@@ -167,6 +189,8 @@ class AgenticEvaluator:
             session_id=resolved_session_id,
             session_dir=session_dir,
             elapsed_seconds=elapsed,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
         )
 
     def _build_prompt(
@@ -206,17 +230,17 @@ class AgenticEvaluator:
                 "No evaluation command was supplied.\n"
                 "1) Inspect the workspace/program as needed.\n"
                 "2) Judge the submission against the evaluation criteria below.\n"
-                "3) Write a JSON file at the metrics path with at least these keys:\n"
-                f'   {{"combined_score": <float 0-{max_score}>, "details": <short reason>}}.\n'
+                "3) Write a single JSON file at the metrics path with this schema:\n"
+                f'   {{"combined_score": <float 0-{max_score}>, "correct": <boolean>, "details": <short reason>}}.\n'
+                "   - combined_score: How well the code performed\n"
+                "   - correct: true if code runs without critical errors (be generous for open-ended tasks)\n"
+                "   - details: Brief explanation of score and any issues\n"
                 "   You may add more fields if useful.\n"
-                f"4) Write `{results_path}/correct.json` with:\n"
-                '   {"correct": <true if code works>, "error": <null or error message>}.\n'
-                "   Be generous for open-ended tasks - if the code runs and does something meaningful, mark correct=true.\n"
-                "5) If you cannot score, still create both files with fallback values (score=0, correct=false).\n"
+                "4) If you cannot score, still create the file with fallback values (score=0, correct=false).\n"
             )
             if eval_criteria:
                 user += f"\nEvaluation criteria:\n{eval_criteria}\n"
-            user += "\nFinish after both metrics.json and correct.json are written.\n"
+            user += "\nFinish after metrics.json is written.\n"
 
         return user.strip(), AGENTIC_EVAL_SYS.format(max_score=max_score).strip()
 

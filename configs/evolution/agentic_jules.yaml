@@ -1,0 +1,70 @@
+# Jules Cloud Agent Configuration
+#
+# Jules is Google's cloud-based AI coding agent. Unlike CLI backends (Codex, Gemini, Claude),
+# Jules operates on GitHub repositories via REST API.
+#
+# Prerequisites:
+#   1. Set JULES_API_KEY env var (get from https://jules.google.com/settings#api)
+#   2. Set GITHUB_TOKEN env var (PAT with 'repo' scope)
+#   3. Connect your GitHub repo in Jules UI: https://jules.google.com/settings
+#
+# Usage:
+#   export JULES_API_KEY="your-key"
+#   export GITHUB_TOKEN="your-token"
+#   uv run shinka_launch evolution@_global_=agentic_jules \
+#     +evo_config.agentic.extra_cli_config.github_repo=owner/repo
+
+evo_config:
+  _target_: shinka.core.EvolutionConfig
+  agentic_mode: true
+  agentic:
+    _target_: shinka.core.runner.AgenticConfig
+    backend: "jules"
+    cli_profile: null  # Not used for Jules
+    sandbox: ""  # Not applicable (cloud-based)
+    approval_mode: "full-auto"
+    max_turns: 50  # Max activities before stopping
+    max_seconds: 1800  # 30 min timeout (Jules is slower than local CLIs)
+    cli_path: null  # Not used for Jules
+    extra_cli_config:
+      # REQUIRED: GitHub repository in "owner/repo" format
+      # This repo must be "connected" in Jules settings
+      github_repo: ""
+      # Branch to start from (Jules will create a temp branch from this)
+      base_branch: "main"
+      # AUTO_CREATE_PR: Jules creates a PR automatically
+      # "": Manual PR creation (Jules commits but doesn't create PR)
+      automation_mode: "AUTO_CREATE_PR"
+      # Polling interval for session status (seconds)
+      poll_interval: 15
+      # Delete temporary branch after completion
+      cleanup_branch: true
+      # Optional: require Jules plan approval before execution.
+      # If null/omitted, Shinka derives this from approval_mode != "full-auto".
+      require_plan_approval: null
+      # Optional: if plan approval is required, auto-approve on first plan event.
+      # Set false to require manual approval in the Jules UI (non-interactive runs will abort).
+      auto_approve_plan: true
+      # Optional: resume support requires an explicit branch name.
+      # When resuming, pass resume_session_id + this branch so Shinka can pull results.
+      resume_branch_name: ""
+    resume_parent_session: false
+    # Local scratch directory for syncing files
+    scratch_dir_base: "/tmp/shinka_scratch"
+  evaluator:
+    _target_: shinka.core.runner.EvaluatorConfig
+    # Use local backend for evaluation (faster than Jules for eval tasks)
+    mode: auto
+    agentic:
+      _target_: shinka.core.runner.AgenticEvaluatorConfig
+      # Use local Codex for eval - faster than cloud-based Jules
+      backend: "codex"
+      cli_profile: null
+      sandbox: "workspace-write"
+      approval_mode: "full-auto"
+      max_turns: 80
+      max_seconds: 0
+      cli_path: null
+      extra_cli_config:
+        model: "gpt-4.1-mini"
+  results_dir: ${output_dir}

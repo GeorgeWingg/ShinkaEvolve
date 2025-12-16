@@ -162,13 +162,12 @@ def main(program_path: str, results_dir: str, problem_id: str) -> None:
         correct = False
         error = str(e)
 
-    # Save correct to JSON file
-    correct_file = os.path.join(results_dir, "correct.json")
-    with open(correct_file, "w") as f:
-        json.dump({"correct": correct, "error": error}, f, indent=4)
-    print(f"Correct saved to {correct_file}")
+    # Consolidate correct into metrics.json
+    metrics["correct"] = correct
+    if error:
+        metrics["details"] = error
 
-    # Save metrics to JSON file
+    # Save metrics to JSON file (consolidated schema)
     metrics_file = os.path.join(
         results_dir,
         "metrics.json",
@@ -192,7 +191,7 @@ if __name__ == "__main__":
         "--results_dir",
         type=str,
         default="results",
-        help="Directory to save results and logs (metrics.json, correct.json)",
+        help="Directory to save results and logs (metrics.json with consolidated schema)",
     )
     parser.add_argument(
         "--problem_id",

@@ -2,6 +2,7 @@ from .agentic import AgentContext, AgenticEditor, AgentResult, CommandResult
 from .apply_diff import apply_diff_patch, redact_immutable
 from .apply_full import apply_full_patch
 from .summary import summarize_diff
+from .types import SandboxMode, get_backend_sandbox_args
 from .claude_cli import (
     run_claude_task,
     ensure_claude_available,
@@ -14,6 +15,14 @@ from .shinka_agent import (
     ShinkaUnavailableError,
     ShinkaExecutionError,
 )
+from .jules_cli import (
+    run_jules_task,
+    JulesExecutionError,
+)
+from .jules_api import (
+    ensure_jules_available,
+    JulesUnavailableError,
+)
 
 __all__ = [
     "redact_immutable",
@@ -24,6 +33,8 @@ __all__ = [
     "AgentContext",
     "AgentResult",
     "CommandResult",
+    "SandboxMode",
+    "get_backend_sandbox_args",
     "run_claude_task",
     "ensure_claude_available",
     "ClaudeUnavailableError",
@@ -32,4 +43,8 @@ __all__ = [
     "ensure_shinka_available",
     "ShinkaUnavailableError",
     "ShinkaExecutionError",
+    "run_jules_task",
+    "ensure_jules_available",
+    "JulesUnavailableError",
+    "JulesExecutionError",
 ]

@@ -8,8 +8,12 @@ from typing import Any, Dict, List, Optional, Union
 from shinka.core.runner import (
     AgenticConfig,
     AgenticEvaluatorConfig,
+    AggregationConfig,
+    EnsembleEvaluatorConfig,
     EvaluatorConfig,
+    EvaluatorInstanceConfig,
     EvolutionConfig,
+    JulesConfig,
 )
 from shinka.database import DatabaseConfig
 from shinka.launch import LocalJobConfig, SlurmCondaJobConfig
@@ -30,6 +34,11 @@ class UIRunConfig:
     git_branch: str = "main"
     git_workspace_path: str = ""  # Where to clone git repos (empty = auto)
     use_worktree: bool = True
+    # For local source_type only: how to isolate when path is a git repo.
+    # "auto" (default) picks worktree for clean repos and snapshot copy for dirty repos.
+    # "worktree" forces a cached worktree (falls back to snapshot copy if dirty).
+    # "snapshot_copy" always copies (preserves uncommitted changes).
+    local_isolation_strategy: str = "auto"
     init_program_path: str = ""
     init_support_dir: Optional[str] = None
     include_patterns: List[str] = field(default_factory=lambda: ["**/*.py"])
@@ -47,7 +56,9 @@ class UIRunConfig:
 
     # Agent configuration
     agentic_mode: bool = True
-    agent_backend: str = "shinka"  # "shinka" | "codex" | "gemini" | "claude"
+    agent_backend: str = "shinka"  # "shinka" | "codex" | "gemini" | "claude" | "jules"
+    # Explicit model selection (takes precedence over cli_profile for Claude/Gemini/ShinkaAgent)
+    agent_model: Optional[str] = None
     agent_max_turns: int = 50
     agent_max_seconds: int = 0
     agent_sandbox: str = "workspace-write"
@@ -60,12 +71,21 @@ class UIRunConfig:
     patch_types: List[str] = field(default_factory=lambda: ["diff", "full"])
 
     # Evaluator configuration
-    evaluator_mode: str = "agentic"  # "legacy" | "agentic" | "auto"
+    evaluator_mode: str = "agentic"  # "legacy" | "agentic" | "auto" | "ensemble"
     eval_program_path: str = ""
     eval_backend: str = "codex"  # Recommended for evaluation
     eval_max_turns: int = 80
     eval_sandbox: str = "workspace-write"
     eval_prompt: str = ""  # Agentic evaluator prompt
+
+    # Ensemble evaluator configuration
+    evaluator_ensemble_enabled: bool = False
+    evaluator_ensemble: List[Dict[str, Any]] = field(default_factory=list)
+    # Structure: [{"name": "primary", "backend": "codex", "model": null, "eval_prompt": "...", "weight": 1.0, "max_events": 80, "enabled": true}, ...]
+    evaluator_aggregation_strategy: str = "average"  # best_score | worst_case | average | weighted_average | majority_vote | median
+    evaluator_aggregation_vote_threshold: float = 0.5
+    evaluator_aggregation_min_successful: int = 1
+    evaluator_max_parallel_evaluators: int = 0  # 0 = no limit
 
     # Run configuration
     run_name: str = ""
@@ -92,9 +112,28 @@ class UIRunConfig:
     meta_rec_interval: Optional[int] = None
     meta_llm_models: Optional[List[str]] = None
     scratchpad_enabled: bool = False
-    scratchpad_backend: str = "codex"  # "codex" | "gemini" | "claude" | "shinka"
+    scratchpad_backend: str = "codex"  # "codex" | "gemini" | "claude" | "shinka" | "jules"
     scratchpad_interval: int = 5
     scratchpad_max_recommendations: int = 5
+
+    # Jules-specific configuration (for cloud agent)
+    jules_github_repo: str = ""
+    jules_base_branch: str = "main"
+    jules_automation_mode: str = "AUTO_CREATE_PR"
+    jules_poll_interval: int = 15
+    jules_cleanup_branch: bool = True
+    jules_auto_approve_plan: bool = True
+
+    # Backend Bandit configuration (multi-backend selection)
+    bandit_enabled: bool = False
+    bandit_backends: List[str] = field(
+        default_factory=lambda: ["codex", "gemini", "claude", "shinka", "jules"]
+    )
+    bandit_epsilon: float = 0.1
+    bandit_exploration_coef: float = 1.0
+    bandit_auto_decay: float = 0.95
+    bandit_use_global_history: bool = False  # Load priors from ~/.shinka/bandit_history.json
+    bandit_record_to_history: bool = True    # Save interactions to global history
 
     # Job configuration
     job_type: str = "local"  # "local" | "slurm_conda" | "slurm_docker"
@@ -132,26 +171,94 @@ class RunConfigBuilder:
         Returns:
             Configured EvolutionConfig instance
         """
-        # Build AgenticConfig
+        # Build AgenticConfig with bandit settings
+        bandit_kwargs = {}
+        if self.ui.bandit_enabled:
+            bandit_kwargs = {
+                "epsilon": self.ui.bandit_epsilon,
+                "exploration_coef": self.ui.bandit_exploration_coef,
+                "auto_decay": self.ui.bandit_auto_decay,
+                "allowed_backends": self.ui.bandit_backends,
+            }
+
+        # Build JulesConfig if Jules backend is selected
+        jules_cfg = None
+        if self.ui.agent_backend == "jules":
+            jules_cfg = JulesConfig(
+                github_repo=self.ui.jules_github_repo,
+                base_branch=self.ui.jules_base_branch,
+                automation_mode=self.ui.jules_automation_mode,
+                poll_interval=self.ui.jules_poll_interval,
+                cleanup_branch=self.ui.jules_cleanup_branch,
+                auto_approve_plan=self.ui.jules_auto_approve_plan,
+            )
+
         agentic_cfg = AgenticConfig(
             backend=self.ui.agent_backend,
+            model=self.ui.agent_model,  # NEW: Explicit model field
             sandbox=self.ui.agent_sandbox,
             approval_mode=self.ui.agent_approval_mode,
-            max_turns=self.ui.agent_max_turns,
+            max_events=self.ui.agent_max_turns,  # Use canonical max_events field
             max_seconds=self.ui.agent_max_seconds,
             resume_parent_session=self.ui.resume_parent_session,
+            bandit_selection=self.ui.bandit_enabled,
+            bandit_kwargs=bandit_kwargs,
+            use_global_bandit_history=self.ui.bandit_use_global_history,
+            record_to_global_history=self.ui.bandit_record_to_history,
+            jules=jules_cfg,  # NEW: Typed Jules config (bridged to extra_cli_config in __post_init__)
         )
 
         # Build EvaluatorConfig
-        if self.ui.evaluator_mode == "agentic":
-            agentic_eval = AgenticEvaluatorConfig(
-                sandbox=self.ui.eval_sandbox,
-                max_turns=self.ui.eval_max_turns,
-                eval_prompt=self.ui.eval_prompt or None,
+        agentic_eval = AgenticEvaluatorConfig(
+            sandbox=self.ui.eval_sandbox,
+            max_events=self.ui.eval_max_turns,  # Use canonical max_events field
+            eval_prompt=self.ui.eval_prompt or None,
+        )
+
+        # Build ensemble config if enabled
+        ensemble_cfg = EnsembleEvaluatorConfig(enabled=False)
+        if self.ui.evaluator_ensemble_enabled and self.ui.evaluator_ensemble:
+            # Convert UI evaluator list to EvaluatorInstanceConfig dict
+            evaluators: Dict[str, EvaluatorInstanceConfig] = {}
+            for eval_data in self.ui.evaluator_ensemble:
+                name = eval_data.get("name", f"evaluator_{len(evaluators)}")
+                evaluators[name] = EvaluatorInstanceConfig(
+                    name=name,
+                    backend=eval_data.get("backend"),
+                    model=eval_data.get("model"),
+                    eval_prompt=eval_data.get("eval_prompt"),
+                    weight=eval_data.get("weight", 1.0),
+                    max_events=eval_data.get("max_events", self.ui.eval_max_turns),
+                    enabled=eval_data.get("enabled", True),
+                    extra_cli_config=eval_data.get("extra_cli_config", {}),
+                )
+
+            ensemble_cfg = EnsembleEvaluatorConfig(
+                enabled=True,
+                defaults=EvaluatorInstanceConfig(
+                    backend=self.ui.eval_backend,
+                    sandbox=self.ui.eval_sandbox,
+                    max_events=self.ui.eval_max_turns,
+                ),
+                evaluators=evaluators,
+                aggregation=AggregationConfig(
+                    strategy=self.ui.evaluator_aggregation_strategy,
+                    vote_threshold=self.ui.evaluator_aggregation_vote_threshold,
+                    min_successful_evals=self.ui.evaluator_aggregation_min_successful,
+                ),
+                max_parallel_evaluators=self.ui.evaluator_max_parallel_evaluators,
             )
-            evaluator_cfg = EvaluatorConfig(mode="agentic", agentic=agentic_eval)
-        else:
-            evaluator_cfg = EvaluatorConfig(mode=self.ui.evaluator_mode)
+
+        # Determine evaluator mode
+        eval_mode = self.ui.evaluator_mode
+        if self.ui.evaluator_ensemble_enabled and self.ui.evaluator_ensemble:
+            eval_mode = "ensemble"
+
+        evaluator_cfg = EvaluatorConfig(
+            mode=eval_mode,
+            agentic=agentic_eval,
+            ensemble=ensemble_cfg,
+        )
 
         # Determine patch types and probabilities
         if self.ui.agentic_mode:
@@ -170,6 +277,9 @@ class RunConfigBuilder:
             # In non-agentic mode, we keep the path so runner can fail/warn or validation catches it
             if resolved_init.exists() or not self.ui.agentic_mode:
                 init_program_path = str(resolved_init)
+        elif self.workspace_path:
+            # Default to workspace root - use the whole codebase for multi-file evolution
+            init_program_path = str(self.workspace_path)
         init_support_dir = None
         if self.ui.init_support_dir:
             init_support_dir = str(self.workspace_path / self.ui.init_support_dir)
@@ -300,7 +410,8 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["git_workspace_path"] = cb.get("git_workspace_path", "")
     # Support both new "isolate_workspace" and old "use_worktree" for backwards compatibility
     flat["use_worktree"] = cb.get("isolate_workspace", cb.get("use_worktree", True))
-    flat["init_program_path"] = cb.get("init_program_path", "initial.py")
+    flat["local_isolation_strategy"] = cb.get("local_isolation_strategy", "auto")
+    flat["init_program_path"] = cb.get("init_program_path", "")
     flat["init_support_dir"] = cb.get("init_support_dir")
     flat["include_patterns"] = cb.get("include_patterns", ["**/*.py"])
     flat["exclude_patterns"] = cb.get("exclude_patterns", ["results/**"])
@@ -315,6 +426,7 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     ag = nested.get("agent", {})
     flat["agentic_mode"] = ag.get("agentic_mode", True)
     flat["agent_backend"] = ag.get("backend", "shinka")
+    flat["agent_model"] = ag.get("model")  # NEW: Explicit model field
     flat["agent_max_turns"] = ag.get("max_turns", 50)
     flat["agent_max_seconds"] = ag.get("max_seconds", 0)
     flat["agent_sandbox"] = ag.get("sandbox", "workspace-write")
@@ -325,6 +437,15 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["embedding_model"] = ag.get("embedding_model", "text-embedding-3-small")
     flat["task_sys_msg"] = ag.get("task_sys_msg", "")
 
+    # Jules-specific agent config
+    jules_cfg = ag.get("jules_config", {})
+    flat["jules_github_repo"] = jules_cfg.get("github_repo", "")
+    flat["jules_base_branch"] = jules_cfg.get("base_branch", "main")
+    flat["jules_automation_mode"] = jules_cfg.get("automation_mode", "AUTO_CREATE_PR")
+    flat["jules_poll_interval"] = jules_cfg.get("poll_interval", 15)
+    flat["jules_cleanup_branch"] = jules_cfg.get("cleanup_branch", True)
+    flat["jules_auto_approve_plan"] = jules_cfg.get("auto_approve_plan", True)
+
     # Evaluator
     ev = nested.get("evaluator", {})
     flat["evaluator_mode"] = ev.get("mode", "agentic")
@@ -334,6 +455,22 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["eval_max_turns"] = ac.get("max_turns", 80)
     flat["eval_sandbox"] = ac.get("sandbox", "workspace-write")
     flat["eval_prompt"] = ac.get("eval_prompt", "")
+
+    # Ensemble evaluator config
+    ensemble = ev.get("ensemble", {})
+    flat["evaluator_ensemble_enabled"] = ensemble.get("enabled", False)
+    flat["evaluator_ensemble"] = ensemble.get("evaluators", [])
+    # Evaluators can be list or dict - convert dict to list format for UI
+    if isinstance(flat["evaluator_ensemble"], dict):
+        flat["evaluator_ensemble"] = [
+            {"name": name, **config}
+            for name, config in flat["evaluator_ensemble"].items()
+        ]
+    agg = ensemble.get("aggregation", {})
+    flat["evaluator_aggregation_strategy"] = agg.get("strategy", "average")
+    flat["evaluator_aggregation_vote_threshold"] = agg.get("vote_threshold", 0.5)
+    flat["evaluator_aggregation_min_successful"] = agg.get("min_successful_evals", 1)
+    flat["evaluator_max_parallel_evaluators"] = ensemble.get("max_parallel_evaluators", 0)
 
     # Run
     run = nested.get("run", {})
@@ -361,6 +498,18 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["scratchpad_backend"] = sp.get("backend", "codex")
     flat["scratchpad_interval"] = sp.get("interval", 5)
     flat["scratchpad_max_recommendations"] = sp.get("max_recommendations", 5)
+
+    # Backend Bandit
+    bandit = nested.get("bandit", {})
+    flat["bandit_enabled"] = bandit.get("enabled", False)
+    flat["bandit_backends"] = bandit.get(
+        "backends", ["codex", "gemini", "claude", "shinka", "jules"]
+    )
+    flat["bandit_epsilon"] = bandit.get("epsilon", 0.1)
+    flat["bandit_exploration_coef"] = bandit.get("exploration_coef", 1.0)
+    flat["bandit_auto_decay"] = bandit.get("auto_decay", 0.95)
+    flat["bandit_use_global_history"] = bandit.get("use_global_history", False)
+    flat["bandit_record_to_history"] = bandit.get("record_to_history", True)
 
     # Job
     job = nested.get("job", {})

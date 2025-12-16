@@ -461,12 +461,76 @@ class ClaudeConfigManager:
         return False
 
 
+@dataclass
+class JulesConfig:
+    """Jules-specific configuration stored in ~/.shinka/jules_config.json.
+
+    Jules is a cloud-based agent that operates on GitHub repos via REST API.
+    These settings are used by the WebUI to populate extra_cli_config.
+    """
+    github_repo: str = ""
+    base_branch: str = "main"
+    automation_mode: str = "AUTO_CREATE_PR"  # AUTO_CREATE_PR or ""
+    poll_interval: int = 15
+    cleanup_branch: bool = True
+
+
+class JulesConfigManager:
+    """Manages Jules configuration in ~/.shinka/jules_config.json.
+
+    Jules is a cloud-based agent (not a CLI) so it doesn't have local CLI config.
+    We store WebUI preferences for GitHub repo, branch, and other settings.
+    """
+
+    def __init__(self, config_path: Optional[Path] = None):
+        self.config_path = config_path or Path.home() / ".shinka" / "jules_config.json"
+
+    def _ensure_dir_exists(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load_config(self) -> JulesConfig:
+        """Load Jules configuration."""
+        if not self.config_path.exists():
+            return JulesConfig()
+        try:
+            data = json.loads(self.config_path.read_text())
+            return JulesConfig(**{k: v for k, v in data.items() if k in JulesConfig.__dataclass_fields__})
+        except Exception as e:
+            logger.error(f"Failed to load Jules config: {e}")
+            return JulesConfig()
+
+    def save_config(self, config: JulesConfig) -> None:
+        """Save Jules configuration."""
+        self._ensure_dir_exists()
+        self.config_path.write_text(json.dumps(asdict(config), indent=2) + "\n")
+        logger.info(f"Saved Jules config to {self.config_path}")
+
+    def to_extra_cli_config(self, config: Optional[JulesConfig] = None) -> Dict[str, Any]:
+        """Convert JulesConfig to extra_cli_config dict for agentic runner.
+
+        Args:
+            config: JulesConfig to convert. If None, loads from disk.
+
+        Returns:
+            Dict suitable for AgenticConfig.extra_cli_config
+        """
+        if config is None:
+            config = self.load_config()
+        return {
+            "github_repo": config.github_repo,
+            "base_branch": config.base_branch,
+            "automation_mode": config.automation_mode,
+            "poll_interval": config.poll_interval,
+            "cleanup_branch": config.cleanup_branch,
+        }
+
+
 # Factory function for getting the right manager
 def get_cli_config_manager(provider: str):
     """Get the appropriate config manager for a CLI provider.
 
     Args:
-        provider: One of 'codex', 'gemini', 'claude', 'shinka'
+        provider: One of 'codex', 'gemini', 'claude', 'jules', 'shinka'
 
     Returns:
         The appropriate config manager instance.
@@ -478,6 +542,7 @@ def get_cli_config_manager(provider: str):
         "codex": CodexProfileManager,
         "gemini": GeminiConfigManager,
         "claude": ClaudeConfigManager,
+        "jules": JulesConfigManager,
     }
 
     if provider == "shinka":
@@ -520,7 +585,7 @@ class SelectedProfilesManager:
         """Get the selected profile/config for a provider.
 
         Returns dict with:
-        - codex: {"profile": "default", "sandbox": "workspace-write"}
+        - codex: {"profile": "default", "sandbox": "workspace-write", "model_reasoning_effort": "high"}
         - gemini: {"system_prompt_file": "my_custom.md", "sandbox_disabled": true}
         - claude: {"skip_permissions": true}
         """

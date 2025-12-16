@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from shinka.webui.git_worktree import GitWorktreeManager, WorktreeInfo
+from shinka.webui.git_worktree import (
+    GitWorktreeManager,
+    WorktreeInfo,
+    is_git_repo,
+    is_dirty_repo,
+    resolve_local_isolation_strategy,
+)
 from shinka.webui.run_config import UIRunConfig, flatten_nested_config
 
 
@@ -56,10 +62,34 @@ class TestGitWorktreeManager:
 
         return repo_path
 
+    @pytest.fixture
+    def dirty_git_repo(self, local_git_repo):
+        """Make the local git repository dirty (uncommitted change)."""
+        (local_git_repo / "main.py").write_text("print('dirty')\n")
+        return local_git_repo
+
     def test_manager_creates_directories(self, manager):
         """Test that manager creates base and cache directories."""
         assert Path(manager.base_dir).exists()
         assert Path(manager.cache_dir).exists()
+
+    def test_git_repo_detection_helpers(self, local_git_repo):
+        """Test is_git_repo / is_dirty_repo helpers."""
+        assert is_git_repo(local_git_repo) is True
+        assert is_dirty_repo(local_git_repo) is False
+        (local_git_repo / "main.py").write_text("print('dirty')\n")
+        assert is_dirty_repo(local_git_repo) is True
+
+    def test_resolve_local_isolation_strategy_clean(self, local_git_repo):
+        """Clean local git repos should prefer worktrees unless forced copy."""
+        assert resolve_local_isolation_strategy(local_git_repo, "auto") == "worktree"
+        assert resolve_local_isolation_strategy(local_git_repo, "worktree") == "worktree"
+        assert resolve_local_isolation_strategy(local_git_repo, "snapshot_copy") == "snapshot_copy"
+
+    def test_resolve_local_isolation_strategy_dirty(self, dirty_git_repo):
+        """Dirty repos should always fall back to snapshot copy."""
+        assert resolve_local_isolation_strategy(dirty_git_repo, "auto") == "snapshot_copy"
+        assert resolve_local_isolation_strategy(dirty_git_repo, "worktree") == "snapshot_copy"
 
     def test_create_local_copy(self, manager, local_git_repo):
         """Test creating an isolated copy of a local directory."""

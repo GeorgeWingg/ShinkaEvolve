@@ -77,6 +77,7 @@ class ParentSamplingStrategy(ABC):
         get_program_func: Callable[[str], Any],
         best_program_id: Optional[str] = None,
         island_idx: Optional[int] = None,
+        program_from_row_func: Optional[Callable[[Any], Any]] = None,
     ):
         self.cursor = cursor
         self.conn = conn
@@ -84,6 +85,7 @@ class ParentSamplingStrategy(ABC):
         self.get_program = get_program_func
         self.best_program_id = best_program_id
         self.island_idx = island_idx
+        self._program_from_row = program_from_row_func
 
     @abstractmethod
     def sample_parent(self) -> Any:
@@ -110,24 +112,31 @@ class PowerLawSamplingStrategy(ParentSamplingStrategy):
         # Try elite archive for exploitation (archive only contains correct programs)
         if hasattr(self.config, "exploitation_ratio"):
             if np.random.random() < self.config.exploitation_ratio:
+                # Single JOIN query to fetch full program data (avoids N+1 queries)
                 if self.island_idx is not None:
                     self.cursor.execute(
-                        """SELECT a.program_id FROM archive a 
-                           JOIN programs p ON a.program_id = p.id 
-                           WHERE p.island_idx = ?""",
+                        """SELECT p.* FROM archive a
+                           JOIN programs p ON a.program_id = p.id
+                           WHERE p.island_idx = ?
+                           ORDER BY p.combined_score DESC""",
                         (self.island_idx,),
                     )
                 else:
-                    self.cursor.execute("SELECT program_id FROM archive")
+                    self.cursor.execute(
+                        """SELECT p.* FROM archive a
+                           JOIN programs p ON a.program_id = p.id
+                           ORDER BY p.combined_score DESC"""
+                    )
                 archived_rows = self.cursor.fetchall()
                 if archived_rows:
-                    archived_program_ids = [row["program_id"] for row in archived_rows]
-
-                    # Fetch Program objects. This could be slow if archive is huge.
-                    # Consider optimizing if performance becomes an issue.
+                    # Convert rows to Program objects directly (batch deserialization)
                     archived_programs = []
-                    for prog_id in archived_program_ids:
-                        prog = self.get_program(prog_id)
+                    for row in archived_rows:
+                        if self._program_from_row:
+                            prog = self._program_from_row(row)
+                        else:
+                            # Fallback to individual fetch if no row converter
+                            prog = self.get_program(row["id"])
                         if prog:
                             archived_programs.append(prog)
 
@@ -154,25 +163,30 @@ class PowerLawSamplingStrategy(ParentSamplingStrategy):
 
         # Exploration from all correct programs (sorted by performance)
         if not pid:
+            # Single query to fetch full program data (avoids N+1 queries)
             if self.island_idx is not None:
                 self.cursor.execute(
-                    """SELECT p.id FROM programs p
+                    """SELECT p.* FROM programs p
                        WHERE p.correct = 1 AND p.island_idx = ?
                        ORDER BY p.combined_score DESC""",
                     (self.island_idx,),
                 )
             else:
                 self.cursor.execute(
-                    """SELECT p.id FROM programs p
+                    """SELECT p.* FROM programs p
                        WHERE p.correct = 1
                        ORDER BY p.combined_score DESC"""
                 )
             correct_rows = self.cursor.fetchall()
             if correct_rows:
-                correct_program_ids = [row["id"] for row in correct_rows]
+                # Convert rows to Program objects directly (batch deserialization)
                 correct_programs = []
-                for prog_id in correct_program_ids:
-                    prog = self.get_program(prog_id)
+                for row in correct_rows:
+                    if self._program_from_row:
+                        prog = self._program_from_row(row)
+                    else:
+                        # Fallback to individual fetch if no row converter
+                        prog = self.get_program(row["id"])
                     if prog:
                         correct_programs.append(prog)
 
@@ -626,6 +640,7 @@ class CombinedParentSelector:
         last_iteration: int = 0,
         update_metadata_func: Optional[Callable[[str, Optional[str]], None]] = None,
         get_best_program_func: Optional[Callable[[], Any]] = None,
+        program_from_row_func: Optional[Callable[[Any], Any]] = None,
     ):
         self.cursor = cursor
         self.conn = conn
@@ -636,6 +651,7 @@ class CombinedParentSelector:
         self.last_iteration = last_iteration
         self.update_metadata = update_metadata_func
         self.get_best_program_func = get_best_program_func
+        self._program_from_row = program_from_row_func
 
     def sample_parent(self, island_idx: Optional[int] = None) -> Any:
         """Sample a parent using the configured sampling strategy."""
@@ -649,6 +665,7 @@ class CombinedParentSelector:
                 self.get_program,
                 self.best_program_id,
                 island_idx,
+                program_from_row_func=self._program_from_row,
             )
         elif strategy_name == "weighted":
             strategy = WeightedSamplingStrategy(
@@ -658,6 +675,7 @@ class CombinedParentSelector:
                 self.get_program,
                 self.best_program_id,
                 island_idx,
+                program_from_row_func=self._program_from_row,
             )
         elif strategy_name == "beam_search":
             strategy = BeamSearchSamplingStrategy(
@@ -671,6 +689,7 @@ class CombinedParentSelector:
                 last_iteration=self.last_iteration,
                 update_metadata_func=self.update_metadata,
                 get_best_program_func=self.get_best_program_func,
+                program_from_row_func=self._program_from_row,
             )
         elif strategy_name == "best_of_n":
             strategy = BestOfNSamplingStrategy(
@@ -680,6 +699,7 @@ class CombinedParentSelector:
                 self.get_program,
                 self.best_program_id,
                 island_idx,
+                program_from_row_func=self._program_from_row,
             )
         else:
             raise ValueError(f"Unknown parent selection strategy: {strategy_name}")

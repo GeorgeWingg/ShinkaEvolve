@@ -24,7 +24,7 @@ def test_agentic_config_defaults():
     assert isinstance(cfg.agentic, AgenticConfig)
     assert cfg.agentic.sandbox == "workspace-write"
     assert cfg.agentic.approval_mode == "full-auto"
-    assert cfg.agentic.max_turns == 50
+    assert cfg.agentic.max_events == 50  # Canonical field (max_turns is deprecated)
     assert cfg.agentic.max_seconds == 0
     assert cfg.agentic.resume_parent_session is False
 
@@ -154,9 +154,9 @@ def test_agentic_editor_failure_produces_retry(monkeypatch, tmp_path):
         generation=1,
     )
 
-    assert code_diff == ""
-    assert num_applied >= 0
-    assert meta["error_attempt"] is None
+    assert code_diff is None
+    assert num_applied == 0
+    assert meta["error_attempt"] is not None
 
 
 def test_ensure_codex_available_failure(monkeypatch):
@@ -177,12 +177,11 @@ def test_run_patch_agentic_integration(monkeypatch, tmp_path):
                 self.scratch_dir = scratch_dir
 
             def run_session(self, context):
-                new_content = context.base_files[context.primary_file].replace(
-                    "return 1",
-                    "return 2",
-                )
+                # Agentic mode no longer requires a primary file; return a concrete change.
+                rel_path = Path("main.py")
+                new_content = "# EVOLVE-BLOCK-START\nreturn 2\n# EVOLVE-BLOCK-END\n"
                 return AgentResult(
-                    changed_files={context.primary_file: new_content},
+                    changed_files={rel_path: new_content},
                     session_log=["done"],
                     commands_run=[
                         CommandResult(
@@ -237,7 +236,7 @@ def test_run_patch_agentic_integration(monkeypatch, tmp_path):
     )
 
     assert num_applied == 1
-    assert code_diff is not None
+    assert code_diff is None
     assert meta["patch_type"] == "agentic"
     assert meta["agent_metrics"]["elapsed_seconds"] == 0.1
 
@@ -345,6 +344,76 @@ def test_agentic_runner_copies_parent_workspace(monkeypatch, tmp_path):
     assert not (results_root / "gen_1" / "results").exists()
 
 
+def test_agentic_patch_does_not_force_main_file(monkeypatch, tmp_path):
+    """Agentic patching should not auto-create main.py when untouched."""
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text("", encoding="utf-8")
+    monkeypatch.setattr(runner_module, "ensure_codex_available", lambda _: fake_codex)
+
+    def dummy_editor_factory(scratch_dir, config, runner=None, codex_runner=None):
+        class DummyEditor:
+            def __init__(self, scratch_dir):
+                self.scratch_dir = scratch_dir
+
+            def run_session(self, context):
+                rel_path = Path("helpers/only_helper.py")
+                return AgentResult(
+                    changed_files={rel_path: "VALUE = 1\n"},
+                    session_log=["helper only"],
+                    commands_run=[],
+                    final_message="done",
+                    metrics={"elapsed_seconds": 0.1},
+                )
+
+        return DummyEditor(scratch_dir)
+
+    monkeypatch.setattr(runner_module, "AgenticEditor", dummy_editor_factory)
+
+    eval_script = tmp_path / "evaluate.py"
+    eval_script.write_text("def main():\n    return True\n", encoding="utf-8")
+
+    results_root = tmp_path / "results"
+    # Parent workspace exists but has no main.py
+    (results_root / "gen_0").mkdir(parents=True, exist_ok=True)
+
+    evo_config = EvolutionConfig(
+        language="python",
+        results_dir=str(results_root),
+        agentic_mode=True,
+        llm_models=["gpt-4.1"],
+    )
+    job_config = LocalJobConfig(eval_program_path=str(eval_script))
+    db_config = DatabaseConfig()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    runner = EvolutionRunner(
+        evo_config=evo_config,
+        job_config=job_config,
+        db_config=db_config,
+        verbose=False,
+    )
+
+    parent_program = Program(
+        id="parent",
+        code="pass",
+        language="python",
+        generation=0,
+    )
+
+    _, meta, num_applied = runner.run_patch(
+        parent_program=parent_program,
+        archive_programs=[],
+        top_k_programs=[],
+        generation=1,
+    )
+
+    assert num_applied == 1
+    helper_file = results_root / "gen_1" / "helpers" / "only_helper.py"
+    assert helper_file.exists()
+    assert not (results_root / "gen_1" / "main.py").exists()
+
+
 def test_agentic_runner_resumes_parent_session(monkeypatch, tmp_path):
     fake_codex = tmp_path / "codex"
     fake_codex.write_text("", encoding="utf-8")
@@ -360,12 +429,10 @@ def test_agentic_runner_resumes_parent_session(monkeypatch, tmp_path):
 
             def run_session(self, context):
                 captured_resume_ids.append(context.resume_session_id)
-                new_code = context.base_files[context.primary_file].replace(
-                    "return 1",
-                    "return 3",
-                )
+                rel_path = Path("main.py")
+                new_code = "# EVOLVE-BLOCK-START\nreturn 3\n# EVOLVE-BLOCK-END\n"
                 return AgentResult(
-                    changed_files={context.primary_file: new_code},
+                    changed_files={rel_path: new_code},
                     session_log=["resumed"],
                     commands_run=[],
                     final_message="done",
@@ -481,11 +548,10 @@ def test_model_name_metadata_uses_backend_fallback(monkeypatch, tmp_path):
                 self.scratch_dir = scratch_dir
 
             def run_session(self, context):
-                new_content = context.base_files[context.primary_file].replace(
-                    "return 1", "return 2"
-                )
+                rel_path = Path("main.py")
+                new_content = "# EVOLVE-BLOCK-START\nreturn 2\n# EVOLVE-BLOCK-END\n"
                 return AgentResult(
-                    changed_files={context.primary_file: new_content},
+                    changed_files={rel_path: new_content},
                     session_log=["done"],
                     commands_run=[],
                     final_message="done",
@@ -536,6 +602,7 @@ def test_model_name_metadata_uses_backend_fallback(monkeypatch, tmp_path):
     # Key assertion: model_name should NOT be "codex-cli" for gemini backend
     assert meta["model_name"] == "gemini-default"
     assert meta["agent_backend"] == "gemini"
+    assert meta["agent_backend_type"] == "cli"
 
 
 def test_model_name_prefers_actual_model_from_events(monkeypatch, tmp_path):
@@ -551,11 +618,10 @@ def test_model_name_prefers_actual_model_from_events(monkeypatch, tmp_path):
                 self.scratch_dir = scratch_dir
 
             def run_session(self, context):
-                new_content = context.base_files[context.primary_file].replace(
-                    "return 1", "return 2"
-                )
+                rel_path = Path("main.py")
+                new_content = "# EVOLVE-BLOCK-START\nreturn 2\n# EVOLVE-BLOCK-END\n"
                 return AgentResult(
-                    changed_files={context.primary_file: new_content},
+                    changed_files={rel_path: new_content},
                     session_log=["done"],
                     commands_run=[],
                     final_message="done",
@@ -605,3 +671,4 @@ def test_model_name_prefers_actual_model_from_events(monkeypatch, tmp_path):
     # Key assertion: actual model from events takes priority
     assert meta["model_name"] == "claude-sonnet-4-20250514"
     assert meta["agent_backend"] == "claude"
+    assert meta["agent_backend_type"] == "cli"

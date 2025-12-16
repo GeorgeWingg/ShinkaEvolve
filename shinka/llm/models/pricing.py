@@ -132,6 +132,19 @@ OPENAI_MODELS = {
         "input_price": 0.05 / M,
         "output_price": 0.4 / M,
     },
+    # GPT-5.2 pricing (Dec 2025) - https://openai.com/api/pricing/
+    "gpt-5.2": {
+        "input_price": 1.75 / M,
+        "output_price": 14.0 / M,
+    },
+    "gpt-5.2-chat-latest": {
+        "input_price": 1.75 / M,
+        "output_price": 14.0 / M,
+    },
+    "gpt-5.2-pro": {
+        "input_price": 21.0 / M,
+        "output_price": 168.0 / M,
+    },
 }
 
 
@@ -185,6 +198,35 @@ GEMINI_MODELS = {
     "gemini-2.0-flash-lite": {
         "input_price": 0.075 / M,
         "output_price": 0.30 / M,
+    },
+}
+
+OPENROUTER_MODELS = {
+    # OpenRouter pricing (Dec 2025) - https://openrouter.ai/models
+    # Prices are per million tokens, use "openrouter/" prefix
+    "openrouter/meta-llama/llama-3.3-70b-instruct": {
+        "input_price": 0.40 / M,
+        "output_price": 0.40 / M,
+    },
+    "openrouter/anthropic/claude-3.5-sonnet": {
+        "input_price": 3.00 / M,
+        "output_price": 15.00 / M,
+    },
+    "openrouter/google/gemini-2.0-flash-exp": {
+        "input_price": 0.00 / M,
+        "output_price": 0.00 / M,
+    },
+    "openrouter/mistralai/mistral-large-2411": {
+        "input_price": 2.00 / M,
+        "output_price": 6.00 / M,
+    },
+    "openrouter/deepseek/deepseek-chat": {
+        "input_price": 0.14 / M,
+        "output_price": 0.28 / M,
+    },
+    "openrouter/qwen/qwen-2.5-72b-instruct": {
+        "input_price": 0.35 / M,
+        "output_price": 0.40 / M,
     },
 }
 

@@ -1,0 +1,17 @@
+# Agentic evolution with git-backed storage
+#
+# Each mutation becomes a real git commit, enabling:
+# - Real git history for evolutionary changes
+# - Cherry-picking between evolutionary branches
+# - Export as a git repository for sharing
+#
+# See docs/git_backed_evolution.md for full documentation.
+
+defaults:
+  - agentic
+
+evo_config:
+  # Enable git-backed storage for this run
+  git_backed_storage: true
+  # Optional: Override repository location
+  # git_repo_path: "/path/to/custom/evolution.git"

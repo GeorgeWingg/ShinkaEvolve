@@ -1,6 +1,7 @@
 """Unit tests for the Claude Code CLI wrapper."""
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -305,7 +306,7 @@ def test_claude_parity_args(mock_subprocess, mock_ensure_claude):
 
 
 def test_claude_prompt_handling(mock_subprocess, mock_ensure_claude):
-    """Verify prompt is passed as positional argument."""
+    """Verify prompt is piped via stdin (not positional)."""
     mock_process = MagicMock()
     mock_process.pid = 222
     mock_process.stdin = MagicMock()
@@ -326,13 +327,16 @@ def test_claude_prompt_handling(mock_subprocess, mock_ensure_claude):
         extra_cli_config={}
     ))
 
-    # Verify prompt is appended as positional arg (last argument)
     call_args = mock_subprocess.call_args[0][0]
-    assert call_args[-1] == user_prompt
+    call_kwargs = mock_subprocess.call_args[1]
+    # Prompt should not be appended as a CLI argument.
+    assert user_prompt not in call_args
+    # Prompt should be provided via stdin file handle.
+    assert call_kwargs.get("stdin") is not subprocess.DEVNULL
 
 
 def test_claude_system_prompt(mock_subprocess, mock_ensure_claude):
-    """Verify system prompt is passed via --system-prompt flag."""
+    """Verify system prompt is passed via --system-prompt-file flag."""
     mock_process = MagicMock()
     mock_process.pid = 333
     mock_process.stdin = MagicMock()
@@ -343,23 +347,26 @@ def test_claude_system_prompt(mock_subprocess, mock_ensure_claude):
     system_prompt = "You are a helpful assistant."
     user_prompt = "Help me"
 
-    list(run_claude_task(
-        user_prompt=user_prompt,
-        system_prompt=system_prompt,
-        workdir=Path("/tmp"),
-        profile=None,
-        sandbox="",
-        approval_mode="default",
-        max_seconds=0,
-        max_events=10,
-        extra_cli_config={}
-    ))
+    # Prevent temp prompt cleanup so we can inspect contents.
+    with patch("shinka.edit.claude_cli.os.remove"):
+        list(run_claude_task(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            workdir=Path("/tmp"),
+            profile=None,
+            sandbox="",
+            approval_mode="default",
+            max_seconds=0,
+            max_events=10,
+            extra_cli_config={}
+        ))
 
     call_args = mock_subprocess.call_args[0][0]
-    assert "--system-prompt" in call_args
-    # Find the index of --system-prompt and check the next arg
-    idx = call_args.index("--system-prompt")
-    assert call_args[idx + 1] == system_prompt
+    assert "--system-prompt-file" in call_args
+    idx = call_args.index("--system-prompt-file")
+    sys_path = Path(call_args[idx + 1])
+    assert sys_path.exists()
+    assert system_prompt in sys_path.read_text(encoding="utf-8")
 
 
 def test_claude_usage_event_emitted(mock_subprocess, mock_ensure_claude):

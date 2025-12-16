@@ -21,6 +21,90 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def is_git_repo(path: Path) -> bool:
+    """Return True if path appears to be a git working tree.
+
+    This is a conservative check used for local-path isolation. It must not
+    mutate the repo.
+    """
+    path = Path(path).resolve()
+    git_dir = path / ".git"
+    if git_dir.exists():
+        return True
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
+def is_dirty_repo(path: Path) -> bool:
+    """Return True if a git working tree has uncommitted changes."""
+    path = Path(path).resolve()
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        return bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
+def get_current_ref(path: Path) -> str:
+    """Get the current branch name for a git repo, or 'HEAD' if detached/unknown."""
+    path = Path(path).resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        ref = result.stdout.strip()
+        if not ref or ref == "HEAD":
+            return "HEAD"
+        return ref
+    except Exception:
+        return "HEAD"
+
+
+def resolve_local_isolation_strategy(repo_path: Path, requested: str = "auto") -> str:
+    """Resolve the isolation strategy for a local path.
+
+    Returns one of: "worktree" or "snapshot_copy".
+    - If repo_path is not a git repo, always snapshot_copy.
+    - If requested is snapshot_copy, always snapshot_copy.
+    - If repo is dirty, snapshot_copy (never touch user state).
+    - Otherwise (clean git repo + auto/worktree), worktree.
+    """
+    repo_path = Path(repo_path).resolve()
+    req = (requested or "auto").lower()
+    if req not in ("auto", "worktree", "snapshot_copy"):
+        req = "auto"
+
+    if not is_git_repo(repo_path):
+        return "snapshot_copy"
+    if req == "snapshot_copy":
+        return "snapshot_copy"
+    if is_dirty_repo(repo_path):
+        return "snapshot_copy"
+    return "worktree"
+
+
 @dataclass
 class WorktreeInfo:
     """Information about a created worktree or clone."""
@@ -108,21 +192,41 @@ class GitWorktreeManager:
         if not cache_path.exists():
             # Create new bare clone with single branch
             logger.info(f"Creating bare clone of {git_url}")
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--bare",
-                    "--single-branch",
-                    "--branch",
-                    branch,
-                    git_url,
-                    str(cache_path),
-                ],
-                capture_output=True,
-                check=True,
-                timeout=600,
-            )
+            clone_cmd = [
+                "git",
+                "clone",
+                "--bare",
+                "--single-branch",
+                "--branch",
+                branch,
+                git_url,
+                str(cache_path),
+            ]
+            try:
+                subprocess.run(
+                    clone_cmd,
+                    capture_output=True,
+                    check=True,
+                    timeout=600,
+                )
+            except subprocess.CalledProcessError as e:
+                # If cloning a local repo and the requested branch doesn't exist,
+                # fall back to cloning HEAD to avoid surprising failures.
+                if Path(git_url).exists():
+                    logger.warning(
+                        f"Bare clone of local repo with branch '{branch}' failed; "
+                        f"retrying without branch. Error: {e}"
+                    )
+                    if cache_path.exists():
+                        shutil.rmtree(cache_path, ignore_errors=True)
+                    subprocess.run(
+                        ["git", "clone", "--bare", git_url, str(cache_path)],
+                        capture_output=True,
+                        check=True,
+                        timeout=600,
+                    )
+                else:
+                    raise
 
         return cache_path
 

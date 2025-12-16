@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
@@ -86,6 +88,7 @@ def run_claude_task(
     cli_path: Optional[str] = None,  # Alias for codex_path
     resume_session_id: Optional[str] = None,
     session_kind: str = "unknown",
+    registry_workdir: Optional[Path] = None,
     # Metadata params (unused but accepted for API compat with agentic.py)
     parent_id: Optional[str] = None,
     generation: Optional[int] = None,
@@ -203,8 +206,29 @@ def run_claude_task(
     elif system_prompt:
         combined_system_prompt = system_prompt
 
+    # Create temp files for system and user prompts to avoid ARG_MAX limits on macOS (~1MB)
+    # Claude CLI supports --system-prompt-file for system prompt (print mode only)
+    system_prompt_temp_path = None
+    user_prompt_temp_path = None
+
     if combined_system_prompt:
-        cmd.extend(["--system-prompt", combined_system_prompt])
+        try:
+            fd, system_prompt_temp_path = tempfile.mkstemp(prefix="claude_sysprompt_", suffix=".txt", text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(combined_system_prompt)
+            cmd.extend(["--system-prompt-file", system_prompt_temp_path])
+        except Exception as e:
+            logger.error(f"Failed to create system prompt temp file: {e}")
+            raise ClaudeExecutionError(f"Failed to create system prompt temp file: {e}")
+
+    if user_prompt:
+        try:
+            fd, user_prompt_temp_path = tempfile.mkstemp(prefix="claude_prompt_", text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(user_prompt)
+        except Exception as e:
+            logger.error(f"Failed to create user prompt temp file: {e}")
+            raise ClaudeExecutionError(f"Failed to create user prompt temp file: {e}")
 
     # Handle extra config flags
     for key, value in extra_cli_config.items():
@@ -232,260 +256,283 @@ def run_claude_task(
     max_retries = 5
     attempt = 0
 
-    while True:
-        attempt += 1
-        start_time = time.monotonic()
-        events_emitted = 0
-        session_id: Optional[str] = None
+    try:
+        while True:
+            attempt += 1
+            start_time = time.monotonic()
+            events_emitted = 0
+            session_id: Optional[str] = None
 
-        # Token tracking for telemetry
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_cost_usd = 0.0
+            # Token tracking for telemetry
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_cost_usd = 0.0
 
-        # Append prompt as positional argument
-        cmd_with_prompt = cmd + [user_prompt] if user_prompt else cmd[:]
+            # Don't append user_prompt to args - will pipe via stdin (avoids ARG_MAX limits)
+            cmd_with_prompt = cmd[:]
 
-        # Environment setup
-        env = {**subprocess.os.environ, "NO_COLOR": "1"}
+            # Environment setup
+            env = {**subprocess.os.environ, "NO_COLOR": "1"}
 
-        # Debug logging setup
-        stdout_capture = None
-        stderr_capture = None
-        if extra_cli_config.get("debug_log"):
-            try:
-                raw_dir = Path(cwd)
-                stdout_capture = raw_dir / "claude_stdout.log"
-                stderr_capture = raw_dir / "claude_stderr.log"
-                stdout_capture.touch(exist_ok=True)
-                stderr_capture.touch(exist_ok=True)
-            except Exception:
-                stdout_capture = None
-                stderr_capture = None
-
-        process = subprocess.Popen(
-            cmd_with_prompt,
-            stdin=subprocess.DEVNULL,  # Claude gets prompt from args, not stdin
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=cwd,
-            env=env,
-        )
-
-        lines = user_prompt.strip().splitlines() if user_prompt else []
-        prompt_preview = lines[0][:160] if lines else ""
-        register_session_process(
-            process.pid,
-            prompt_preview=prompt_preview,
-            workdir=workdir,
-            session_kind=session_kind,
-            parent_id=parent_id,
-            generation=generation,
-            patch_type=patch_type,
-            results_dir=results_dir,
-        )
-
-        # Track pending tool calls for result correlation
-        pending_tools: Dict[str, Dict[str, Any]] = {}
-
-        try:
-            if not process.stdout:
-                raise ClaudeExecutionError("Claude CLI did not provide stdout pipe.")
-
-            while True:
-                if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
-                    process.kill()
-                    raise ClaudeExecutionError(
-                        f"Claude task exceeded {max_seconds}s timeout."
-                    )
-
-                line = process.stdout.readline()
-                if not line:
-                    if process.poll() is not None:
-                        # Emit usage event at end
-                        yield {
-                            "type": "usage",
-                            "session_id": session_id,
-                            "usage": {
-                                "input_tokens": total_input_tokens,
-                                "output_tokens": total_output_tokens,
-                                "total_tokens": total_input_tokens + total_output_tokens,
-                                "total_cost_usd": total_cost_usd,
-                            },
-                        }
-                        return
-                    time.sleep(0.05)
-                    continue
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Debug capture
-                if stdout_capture:
-                    try:
-                        with stdout_capture.open("a", encoding="utf-8") as f:
-                            f.write(line + "\n")
-                    except Exception:
-                        pass
-
+            # Debug logging setup
+            stdout_capture = None
+            stderr_capture = None
+            if extra_cli_config.get("debug_log"):
                 try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+                    raw_dir = Path(cwd)
+                    stdout_capture = raw_dir / "claude_stdout.log"
+                    stderr_capture = raw_dir / "claude_stderr.log"
+                    stdout_capture.touch(exist_ok=True)
+                    stderr_capture.touch(exist_ok=True)
+                except Exception:
+                    stdout_capture = None
+                    stderr_capture = None
 
-                events_emitted += 1
-                if max_events and events_emitted > max_events:
-                    process.kill()
-                    raise ClaudeExecutionError(
-                        "Claude emitted more events than allowed."
-                    )
+            # Open user prompt file for piping to stdin
+            prompt_file_handle = None
+            if user_prompt_temp_path:
+                try:
+                    prompt_file_handle = open(user_prompt_temp_path, 'r', encoding='utf-8')
+                except Exception as e:
+                    logger.error(f"Failed to open user prompt temp file for reading: {e}")
+                    raise ClaudeExecutionError(f"Failed to open user prompt temp file: {e}")
 
-                event_type = event.get("type")
+            process = subprocess.Popen(
+                cmd_with_prompt,
+                stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=cwd,
+                env=env,
+            )
 
-                # Handle system init event
-                if event_type == "system" and event.get("subtype") == "init":
-                    sid = event.get("session_id")
-                    if sid:
-                        session_id = sid
-                        update_session_process(process.pid, session_id=sid)
-                    yield {
-                        "type": "init",
-                        "session_id": sid,
-                        "model": event.get("model"),
-                        "tools": event.get("tools", []),
-                    }
+            # Close our handle to the file; Popen has its own
+            if prompt_file_handle:
+                prompt_file_handle.close()
+                prompt_file_handle = None
 
-                # Handle assistant messages
-                elif event_type == "assistant":
-                    message = event.get("message", {})
-                    content_blocks = message.get("content", [])
-                    usage = message.get("usage", {})
+            lines = user_prompt.strip().splitlines() if user_prompt else []
+            prompt_preview = lines[0][:160] if lines else ""
+            register_session_process(
+                process.pid,
+                prompt_preview=prompt_preview,
+                workdir=registry_workdir or workdir,
+                session_kind=session_kind,
+                parent_id=parent_id,
+                generation=generation,
+                patch_type=patch_type,
+                results_dir=results_dir,
+            )
 
-                    # Track usage from each assistant message
-                    total_input_tokens += usage.get("input_tokens", 0)
-                    total_output_tokens += usage.get("output_tokens", 0)
+            # Track pending tool calls for result correlation
+            pending_tools: Dict[str, Dict[str, Any]] = {}
 
-                    for block in content_blocks:
-                        block_type = block.get("type")
+            try:
+                if not process.stdout:
+                    raise ClaudeExecutionError("Claude CLI did not provide stdout pipe.")
 
-                        if block_type == "text":
-                            text = block.get("text", "")
-                            if text:
-                                yield {
-                                    "type": "agent_message",
-                                    "item": {
+                while True:
+                    if max_seconds > 0 and time.monotonic() - start_time > max_seconds:
+                        process.kill()
+                        raise ClaudeExecutionError(
+                            f"Claude task exceeded {max_seconds}s timeout."
+                        )
+
+                    line = process.stdout.readline()
+                    if not line:
+                        if process.poll() is not None:
+                            # Emit usage event at end
+                            yield {
+                                "type": "usage",
+                                "session_id": session_id,
+                                "usage": {
+                                    "input_tokens": total_input_tokens,
+                                    "output_tokens": total_output_tokens,
+                                    "total_tokens": total_input_tokens + total_output_tokens,
+                                    "total_cost_usd": total_cost_usd,
+                                },
+                            }
+                            return
+                        time.sleep(0.05)
+                        continue
+
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Debug capture
+                    if stdout_capture:
+                        try:
+                            with stdout_capture.open("a", encoding="utf-8") as f:
+                                f.write(line + "\n")
+                        except Exception:
+                            pass
+
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    events_emitted += 1
+                    if max_events and events_emitted > max_events:
+                        process.kill()
+                        raise ClaudeExecutionError(
+                            "Claude emitted more events than allowed."
+                        )
+
+                    event_type = event.get("type")
+
+                    # Handle system init event
+                    if event_type == "system" and event.get("subtype") == "init":
+                        sid = event.get("session_id")
+                        if sid:
+                            session_id = sid
+                            update_session_process(process.pid, session_id=sid)
+                        yield {
+                            "type": "init",
+                            "session_id": sid,
+                            "model": event.get("model"),
+                            "tools": event.get("tools", []),
+                        }
+
+                    # Handle assistant messages
+                    elif event_type == "assistant":
+                        message = event.get("message", {})
+                        content_blocks = message.get("content", [])
+                        usage = message.get("usage", {})
+
+                        # Track usage from each assistant message
+                        total_input_tokens += usage.get("input_tokens", 0)
+                        total_output_tokens += usage.get("output_tokens", 0)
+
+                        for block in content_blocks:
+                            block_type = block.get("type")
+
+                            if block_type == "text":
+                                text = block.get("text", "")
+                                if text:
+                                    yield {
                                         "type": "agent_message",
-                                        "text": text,
+                                        "item": {
+                                            "type": "agent_message",
+                                            "text": text,
+                                        },
+                                        "session_id": session_id,
+                                    }
+
+                            elif block_type == "tool_use":
+                                tool_id = block.get("id")
+                                tool_name = block.get("name")
+                                tool_input = block.get("input", {})
+
+                                if tool_id:
+                                    pending_tools[tool_id] = {
+                                        "name": tool_name,
+                                        "input": tool_input,
+                                    }
+
+                                yield {
+                                    "type": "tool_use",
+                                    "tool_id": tool_id,
+                                    "tool_name": tool_name,
+                                    "parameters": tool_input,
+                                    "session_id": session_id,
+                                }
+
+                    # Handle user messages (tool results)
+                    elif event_type == "user":
+                        message = event.get("message", {})
+                        content_blocks = message.get("content", [])
+                        tool_use_result = event.get("tool_use_result")
+
+                        for block in content_blocks:
+                            if block.get("type") == "tool_result":
+                                tool_id = block.get("tool_use_id")
+                                tool_content = block.get("content", "")
+                                is_error = block.get("is_error", False)
+
+                                # Get tool info from pending
+                                tool_info = pending_tools.pop(tool_id, {"name": "unknown", "input": {}})
+                                tool_name = tool_info.get("name", "unknown")
+                                tool_input = tool_info.get("input", {})
+
+                                # Extract stdout/stderr from tool_use_result if available
+                                # tool_use_result may be a dict with stdout/stderr, or a string, or None
+                                stdout = ""
+                                stderr = ""
+                                if isinstance(tool_use_result, dict):
+                                    stdout = tool_use_result.get("stdout", "")
+                                    stderr = tool_use_result.get("stderr", "")
+                                elif isinstance(tool_use_result, str):
+                                    # If it's a string, use it as stdout
+                                    stdout = tool_use_result
+
+                                # Build command string
+                                if tool_name == "Bash" and "command" in tool_input:
+                                    command_str = tool_input["command"]
+                                else:
+                                    command_str = f"{tool_name}({json.dumps(tool_input)})"
+
+                                # Use content if stdout/stderr not available
+                                if not stdout and not stderr:
+                                    if is_error:
+                                        stderr = tool_content
+                                    else:
+                                        stdout = tool_content
+
+                                yield {
+                                    "type": "command_execution",
+                                    "item": {
+                                        "type": "command_execution",
+                                        "command": command_str,
+                                        "status": "error" if is_error else "success",
+                                        "exit_code": 1 if is_error else 0,
+                                        "stdout": stdout,
+                                        "stderr": stderr,
                                     },
                                     "session_id": session_id,
                                 }
 
-                        elif block_type == "tool_use":
-                            tool_id = block.get("id")
-                            tool_name = block.get("name")
-                            tool_input = block.get("input", {})
+                    # Handle final result
+                    elif event_type == "result":
+                        total_cost_usd = event.get("total_cost_usd", 0.0)
+                        usage = event.get("usage", {})
+                        total_input_tokens = usage.get("input_tokens", total_input_tokens)
+                        total_output_tokens = usage.get("output_tokens", total_output_tokens)
 
-                            if tool_id:
-                                pending_tools[tool_id] = {
-                                    "name": tool_name,
-                                    "input": tool_input,
-                                }
+                        # Pass through result for logging
+                        yield event
 
-                            yield {
-                                "type": "tool_use",
-                                "tool_id": tool_id,
-                                "tool_name": tool_name,
-                                "parameters": tool_input,
-                                "session_id": session_id,
-                            }
+            except ClaudeExecutionError as exc:
+                if process.poll() is None:
+                    process.kill()
+                # Retry on capacity/rate-limit errors
+                err_str = str(exc).lower()
+                if attempt < max_retries and ("capacity" in err_str or "rate" in err_str or "overloaded" in err_str):
+                    time.sleep(5 * attempt)
+                    continue
+                raise
 
-                # Handle user messages (tool results)
-                elif event_type == "user":
-                    message = event.get("message", {})
-                    content_blocks = message.get("content", [])
-                    tool_use_result = event.get("tool_use_result")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                remove_session_process(process.pid)
 
-                    for block in content_blocks:
-                        if block.get("type") == "tool_result":
-                            tool_id = block.get("tool_use_id")
-                            tool_content = block.get("content", "")
-                            is_error = block.get("is_error", False)
-
-                            # Get tool info from pending
-                            tool_info = pending_tools.pop(tool_id, {"name": "unknown", "input": {}})
-                            tool_name = tool_info.get("name", "unknown")
-                            tool_input = tool_info.get("input", {})
-
-                            # Extract stdout/stderr from tool_use_result if available
-                            # tool_use_result may be a dict with stdout/stderr, or a string, or None
-                            stdout = ""
-                            stderr = ""
-                            if isinstance(tool_use_result, dict):
-                                stdout = tool_use_result.get("stdout", "")
-                                stderr = tool_use_result.get("stderr", "")
-                            elif isinstance(tool_use_result, str):
-                                # If it's a string, use it as stdout
-                                stdout = tool_use_result
-
-                            # Build command string
-                            if tool_name == "Bash" and "command" in tool_input:
-                                command_str = tool_input["command"]
-                            else:
-                                command_str = f"{tool_name}({json.dumps(tool_input)})"
-
-                            # Use content if stdout/stderr not available
-                            if not stdout and not stderr:
-                                if is_error:
-                                    stderr = tool_content
-                                else:
-                                    stdout = tool_content
-
-                            yield {
-                                "type": "command_execution",
-                                "item": {
-                                    "type": "command_execution",
-                                    "command": command_str,
-                                    "status": "error" if is_error else "success",
-                                    "exit_code": 1 if is_error else 0,
-                                    "stdout": stdout,
-                                    "stderr": stderr,
-                                },
-                                "session_id": session_id,
-                            }
-
-                # Handle final result
-                elif event_type == "result":
-                    total_cost_usd = event.get("total_cost_usd", 0.0)
-                    usage = event.get("usage", {})
-                    total_input_tokens = usage.get("input_tokens", total_input_tokens)
-                    total_output_tokens = usage.get("output_tokens", total_output_tokens)
-
-                    # Pass through result for logging
-                    yield event
-
-        except ClaudeExecutionError as exc:
-            if process.poll() is None:
-                process.kill()
-            # Retry on capacity/rate-limit errors
-            err_str = str(exc).lower()
-            if attempt < max_retries and ("capacity" in err_str or "rate" in err_str or "overloaded" in err_str):
-                time.sleep(5 * attempt)
-                continue
-            raise
-
-        finally:
-            if process.poll() is None:
-                process.kill()
-            remove_session_process(process.pid)
-
-            # Capture stderr for debugging
-            if stderr_capture and process.stderr:
+                # Capture stderr for debugging
+                if stderr_capture and process.stderr:
+                    try:
+                        err_tail = process.stderr.read()
+                        if err_tail:
+                            with stderr_capture.open("a", encoding="utf-8") as f:
+                                f.write(err_tail)
+                    except Exception:
+                        pass
+    finally:
+        # Clean up temp files
+        for temp_path in [system_prompt_temp_path, user_prompt_temp_path]:
+            if temp_path and os.path.exists(temp_path):
                 try:
-                    err_tail = process.stderr.read()
-                    if err_tail:
-                        with stderr_capture.open("a", encoding="utf-8") as f:
-                            f.write(err_tail)
+                    os.remove(temp_path)
                 except Exception:
                     pass

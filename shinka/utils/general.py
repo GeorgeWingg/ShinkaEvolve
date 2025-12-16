@@ -48,12 +48,22 @@ def load_results(results_dir: str):
         logger.warning(warning_msg)
         loaded_results["metrics"] = {}
 
-    correct_file_path = results_dir_path / "correct.json"
-    if correct_file_path.exists():
-        with open(correct_file_path, "r") as f:
-            loaded_results["correct"] = json.load(f)
+    # Read correct from consolidated metrics.json, with backward compat for old correct.json
+    metrics = loaded_results.get("metrics", {})
+    if "correct" in metrics:
+        # New consolidated schema: correct is in metrics.json
+        loaded_results["correct"] = {
+            "correct": metrics.get("correct", False),
+            "error": metrics.get("details") if not metrics.get("correct") else None
+        }
     else:
-        loaded_results["correct"] = {"correct": False}
+        # Backward compatibility: try reading from separate correct.json
+        correct_file_path = results_dir_path / "correct.json"
+        if correct_file_path.exists():
+            with open(correct_file_path, "r") as f:
+                loaded_results["correct"] = json.load(f)
+        else:
+            loaded_results["correct"] = {"correct": False}
 
     return loaded_results
 

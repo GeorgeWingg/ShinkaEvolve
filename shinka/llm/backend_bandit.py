@@ -7,7 +7,7 @@ This module provides a multi-armed bandit for selecting between agentic backends
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -143,15 +143,19 @@ class BackendBandit:
         backend: str,
         reward: Optional[float],
         baseline: Optional[float] = None,
-    ) -> None:
+    ) -> Optional[Tuple[float, float]]:
         """Update bandit after evaluation.
-        
+
         Args:
             backend: The backend that was used
             reward: The score achieved (None if evaluation failed)
             baseline: The parent's score for baseline shift
+
+        Returns:
+            Tuple of (normalized_score, baseline) if update succeeded, None otherwise
         """
-        self._bandit.update(arm=backend, reward=reward, baseline=baseline)
+        result = self._bandit.update(arm=backend, reward=reward, baseline=baseline)
+        return result
     
     def posterior(self, subset: Optional[List[str]] = None) -> np.ndarray:
         """Get selection probabilities for backends.

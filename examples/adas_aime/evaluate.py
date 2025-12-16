@@ -146,7 +146,7 @@ if __name__ == "__main__":
         "--results_dir",
         type=str,
         default="results",
-        help="Directory to save results and logs (metrics.json, correct.json)",
+        help="Directory to save results and logs (metrics.json with consolidated schema)",
     )
     parser.add_argument(
         "--model_name",

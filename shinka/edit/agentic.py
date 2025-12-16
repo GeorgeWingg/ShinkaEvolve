@@ -159,6 +159,8 @@ class AgenticEditor:
                 if isinstance(event, dict):
                     json.dump(event, event_handle)
                     event_handle.write("\n")
+                    # Flush so the WebUI can stream events in real time.
+                    event_handle.flush()
                     event_count += 1
                     session_events.append(event)
                     if session_id is None:

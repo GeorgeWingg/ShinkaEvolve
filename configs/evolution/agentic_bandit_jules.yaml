@@ -1,0 +1,42 @@
+# Jules with Backend Bandit Configuration
+#
+# Enables dynamic backend selection that includes Jules along with
+# other authenticated backends (Gemini, Claude, Shinka).
+#
+# The bandit learns which backend performs best and adapts selection.
+#
+# Prerequisites:
+#   1. Set JULES_API_KEY env var
+#   2. Set GITHUB_TOKEN env var
+#   3. Connect your GitHub repo in Jules UI
+#   4. Authenticate other backends you want to include
+
+defaults:
+  - agentic_jules
+
+evo_config:
+  agentic:
+    # Default fallback backend (if bandit not initialized)
+    backend: "jules"
+    # Enable backend bandit for dynamic selection
+    bandit_selection: true
+    bandit_kwargs:
+      # UCB exploration coefficient
+      exploration_coef: 1.0
+      # Epsilon for epsilon-greedy exploration
+      epsilon: 0.1
+      # Decay factor for exploration over time
+      auto_decay: 0.95
+      # Normalize rewards by parent score
+      shift_by_baseline: true
+      # Different scaling for different backends
+      asymmetric_scaling: true
+      # Backends to include in selection (must be authenticated)
+      allowed_backends:
+        - gemini
+        - claude
+        - shinka
+        - jules
+  evaluator:
+    # Use legacy evaluator for reliability with bandit
+    mode: legacy

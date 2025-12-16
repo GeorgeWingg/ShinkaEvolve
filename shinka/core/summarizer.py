@@ -183,7 +183,7 @@ class MetaSummarizer:
         """Query using CLI backend in AGENTIC mode - agent runs in results_dir.
 
         The agent explores the results directory, reads gen_*/results/metrics.json
-        and gen_*/main.py files, and writes output to _meta/ directory.
+        and the full gen_*/ workspace, and writes output to _meta/ directory.
 
         Args:
             user_msg: The user prompt (tells agent what to analyze and where to write)
@@ -394,7 +394,7 @@ class MetaSummarizer:
         """
         Agentic mode meta-analysis: agent explores results_dir and writes to _meta/.
 
-        The agent reads gen_*/results/metrics.json and gen_*/main.py directly,
+        The agent reads gen_*/results/metrics.json and the full gen_*/ workspace,
         then writes summaries, insights, and recommendations to _meta/.
         """
         total_cost = 0.0

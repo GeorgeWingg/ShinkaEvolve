@@ -36,18 +36,25 @@ def save_json_results(
     correct: bool,
     error: Optional[str] = None,
 ) -> None:
-    """Saves metrics and correctness status to JSON files."""
+    """Saves metrics and correctness status to a single metrics.json file.
+    
+    The consolidated schema includes:
+      - combined_score: float (0 to max_score)
+      - correct: boolean (gate for parent selection)
+      - details: string (explanation, replaces 'error' for consistency)
+      - ... other task-specific metrics
+    """
     os.makedirs(results_dir, exist_ok=True)
 
-    correct_payload = {"correct": correct, "error": error}
-    correct_file = os.path.join(results_dir, "correct.json")
-    with open(correct_file, "w") as f:
-        json.dump(correct_payload, f, indent=4)
-    print(f"Correctness and error status saved to {correct_file}")
-
+    # Consolidate correct and error into metrics
+    metrics_consolidated = metrics.copy()
+    metrics_consolidated["correct"] = correct
+    if error:
+        metrics_consolidated["details"] = error
+    
     metrics_file = os.path.join(results_dir, "metrics.json")
     with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=4)
+        json.dump(metrics_consolidated, f, indent=4)
     print(f"Metrics saved to {metrics_file}")
 
 
@@ -67,7 +74,7 @@ def run_shinka_eval(
 
     Args:
         program_path: Path to the Python script/module to evaluate.
-        results_dir: Directory to save `metrics.json` and `correct.json`.
+        results_dir: Directory to save `metrics.json` (consolidated schema).
         experiment_fn_name: Name of function to call in the loaded module.
         num_runs: Number of times to run the experiment function.
         get_experiment_kwargs: Opt. fn (run_idx_0_based -> kwargs_dict)
