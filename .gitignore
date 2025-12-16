@@ -193,3 +193,15 @@ assets/
 # Test scratch directories
 scratch_*/
 shinka_circle_packing/
+
+# Local agent instructions (not for sharing)
+AGENTS.md
+CLAUDE.md
+PLANS.md
+
+# Internal docs and scripts
+docs/archive/
+docs/ART_DIRECTION.md
+docs/codex-evolve/
+scripts/
+process_assets.py
