@@ -8,9 +8,15 @@ are available for selection.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# Cache for auth status results to avoid hammering APIs with potentially expired tokens
+# Format: {backend: (BackendAuthStatus, timestamp)}
+_auth_status_cache: Dict[str, Tuple["BackendAuthStatus", float]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes - avoids frequent 401 errors from expired tokens
 
 # Import the ensure_*_available functions from each backend
 from shinka.edit.codex_cli import CodexUnavailableError, ensure_codex_available
@@ -29,13 +35,36 @@ ALL_BACKENDS = ["codex", "gemini", "claude", "shinka", "jules", "openrouter"]
 @dataclass
 class BackendAuthStatus:
     """Authentication status for a single backend."""
-    
+
     backend: str
     available: bool
     cli_path: Optional[str] = None
     plan: Optional[str] = None
     email: Optional[str] = None
     error: Optional[str] = None
+
+
+def _get_cached_status(backend: str) -> Optional[BackendAuthStatus]:
+    """Get cached auth status if still valid."""
+    if backend in _auth_status_cache:
+        status, timestamp = _auth_status_cache[backend]
+        if time.time() - timestamp < _CACHE_TTL_SECONDS:
+            return status
+    return None
+
+
+def _cache_status(status: BackendAuthStatus) -> BackendAuthStatus:
+    """Cache auth status and return it."""
+    _auth_status_cache[status.backend] = (status, time.time())
+    return status
+
+
+def clear_auth_cache(backend: Optional[str] = None) -> None:
+    """Clear auth status cache. Call after re-authentication."""
+    if backend:
+        _auth_status_cache.pop(backend, None)
+    else:
+        _auth_status_cache.clear()
 
 
 def check_codex_auth() -> BackendAuthStatus:
@@ -60,7 +89,11 @@ def check_codex_auth() -> BackendAuthStatus:
                 backend="codex",
                 available=False,
                 cli_path=str(cli_path),
-                error="Not authenticated. Run `codex login` first.",
+                error=(
+                    "Not authenticated. Run `codex login --device-auth` "
+                    "(requires enabling in ChatGPT Security Settings: chatgpt.com/settings/security) "
+                    "or set OPENAI_API_KEY."
+                ),
             )
         
         # Try to extract plan info if available
@@ -106,7 +139,7 @@ def check_codex_auth() -> BackendAuthStatus:
         )
 
 
-def check_gemini_auth() -> BackendAuthStatus:
+def check_gemini_auth(skip_cache: bool = False) -> BackendAuthStatus:
     """Check if Gemini CLI is installed and authenticated.
 
     Checks:
@@ -114,9 +147,18 @@ def check_gemini_auth() -> BackendAuthStatus:
     2. Credentials exist (~/.gemini/oauth_creds.json or similar)
     3. Extracts tier and email from Gemini account files
 
+    Args:
+        skip_cache: If True, bypass cache and check fresh (use after re-auth)
+
     Returns:
         BackendAuthStatus with availability info
     """
+    # Check cache first to avoid hammering API with expired tokens
+    if not skip_cache:
+        cached = _get_cached_status("gemini")
+        if cached is not None:
+            return cached
+
     try:
         cli_path = ensure_gemini_available()
 
@@ -154,12 +196,12 @@ def check_gemini_auth() -> BackendAuthStatus:
                 pass
 
         if not auth_found:
-            return BackendAuthStatus(
+            return _cache_status(BackendAuthStatus(
                 backend="gemini",
                 available=False,
                 cli_path=str(cli_path),
                 error="Not authenticated. Run `gemini` to start interactive login, or set GEMINI_API_KEY.",
-            )
+            ))
 
         # Try to extract tier and email info
         plan = None
@@ -200,20 +242,20 @@ def check_gemini_auth() -> BackendAuthStatus:
         elif has_api_key:
             plan = "API Key"
 
-        return BackendAuthStatus(
+        return _cache_status(BackendAuthStatus(
             backend="gemini",
             available=True,
             cli_path=str(cli_path),
             plan=plan or "Subscription",
             email=email,
-        )
+        ))
 
     except GeminiUnavailableError as e:
-        return BackendAuthStatus(
+        return _cache_status(BackendAuthStatus(
             backend="gemini",
             available=False,
             error=str(e),
-        )
+        ))
 
 
 def check_claude_auth() -> BackendAuthStatus:

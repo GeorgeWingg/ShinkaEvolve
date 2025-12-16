@@ -122,13 +122,80 @@ def load_google_account_info(gemini_home: Path) -> Tuple[Optional[str], Optional
     return None, None
 
 
-def refresh_oauth_token(creds: Dict[str, Any]) -> str:
+def _trigger_gemini_cli_refresh() -> bool:
+    """Run Gemini CLI to trigger its internal token refresh.
+
+    The Gemini CLI handles token refresh internally when it runs.
+    We run a minimal command to trigger this refresh.
+
+    Returns:
+        True if refresh succeeded, False otherwise
+    """
+    import shutil
+    import subprocess
+
+    gemini_bin = shutil.which("gemini")
+    if not gemini_bin:
+        return False
+
+    try:
+        # Run a minimal command with JSON output and short timeout
+        # The CLI will refresh the token as part of startup
+        # Using "hi" as the shortest possible prompt
+        result = subprocess.run(
+            [gemini_bin, "--output-format", "json", "hi"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        # Success if CLI ran (even errors mean the CLI ran and refreshed)
+        return result.returncode == 0 or len(result.stdout) > 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
+
+def _is_token_expired(creds: Dict[str, Any]) -> bool:
+    """Check if the OAuth token is expired.
+
+    Args:
+        creds: OAuth credentials dict
+
+    Returns:
+        True if token is expired or expiry unknown, False if still valid
+    """
+    expiry = creds.get("expiry") or creds.get("token_expiry") or creds.get("expiry_date")
+    if not expiry:
+        return True  # Unknown expiry, assume expired to be safe
+
+    try:
+        if isinstance(expiry, str):
+            expiry_dt = dt.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        elif expiry > 1e12:
+            # Timestamp is in milliseconds (Gemini CLI format)
+            expiry_dt = dt.datetime.fromtimestamp(expiry / 1000, tz=dt.timezone.utc)
+        else:
+            expiry_dt = dt.datetime.fromtimestamp(expiry, tz=dt.timezone.utc)
+
+        # Add 60 second buffer to avoid edge cases
+        return expiry_dt <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60)
+    except (ValueError, TypeError):
+        return True  # Can't parse, assume expired
+
+
+def refresh_oauth_token(creds: Dict[str, Any], gemini_home: Optional[Path] = None) -> str:
     """Refresh the OAuth access token if needed.
 
-    Uses the google-auth library to handle token refresh.
+    Tries multiple refresh strategies:
+    1. Check if token is still valid
+    2. Use google-auth library if available
+    3. Run Gemini CLI to trigger its internal refresh
 
     Args:
         creds: OAuth credentials dict with refresh_token, client_id, client_secret
+        gemini_home: Path to reload credentials from after CLI refresh
 
     Returns:
         Valid access token (refreshed if necessary)
@@ -139,24 +206,12 @@ def refresh_oauth_token(creds: Dict[str, Any]) -> str:
     access_token = creds.get("access_token")
     refresh_token = creds.get("refresh_token")
 
-    # Check if token is expired (if expiry info available)
-    expiry = creds.get("expiry") or creds.get("token_expiry")
-    if expiry:
-        try:
-            if isinstance(expiry, str):
-                # Parse ISO format expiry
-                expiry_dt = dt.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-            else:
-                expiry_dt = dt.datetime.fromtimestamp(expiry, tz=dt.timezone.utc)
+    # Check if token is still valid
+    if not _is_token_expired(creds):
+        return access_token
 
-            # If not expired, return current token
-            if expiry_dt > dt.datetime.now(dt.timezone.utc):
-                return access_token
-        except (ValueError, TypeError):
-            pass  # Can't parse expiry, try to use token anyway
-
-    # If we have a refresh token, try to refresh
-    if refresh_token:
+    # Strategy 1: Try google-auth library refresh
+    if refresh_token and creds.get("client_id") and creds.get("client_secret"):
         try:
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request
@@ -174,11 +229,22 @@ def refresh_oauth_token(creds: Dict[str, Any]) -> str:
                 return google_creds.token
 
         except ImportError:
-            # google-auth not installed, try with current token
-            pass
+            pass  # google-auth not installed
         except Exception:
-            # Refresh failed, try with current token
-            pass
+            pass  # Refresh failed
+
+    # Strategy 2: Run Gemini CLI to trigger its internal token refresh
+    # This is the most reliable method since the CLI handles its own auth
+    if _trigger_gemini_cli_refresh():
+        # Reload credentials from disk after CLI refresh
+        home = gemini_home or get_gemini_home()
+        try:
+            new_creds = load_oauth_credentials(home)
+            new_token = new_creds.get("access_token")
+            if new_token and new_token != access_token:
+                return new_token
+        except Exception:
+            pass  # Couldn't reload, fall through
 
     # Return current token and hope it works
     if not access_token:
@@ -205,7 +271,7 @@ def load_auth_info(gemini_home: Optional[Path] = None) -> GeminiAuthInfo:
     creds = load_oauth_credentials(home)
 
     # Get valid access token (refresh if needed)
-    access_token = refresh_oauth_token(creds)
+    access_token = refresh_oauth_token(creds, gemini_home=home)
 
     # Load account info
     email, _ = load_google_account_info(home)

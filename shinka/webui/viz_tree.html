@@ -43,12 +43,12 @@
             --backend-shinka: #2DD4BF;
             --backend-jules: #8B5CF6;
 
-            /* Motion */
-            --transition-micro: 150ms;
-            --transition-standard: 250ms;
-            --transition-emphasis: 400ms;
+            /* Motion - slightly reduced for comfort */
+            --transition-micro: 200ms;
+            --transition-standard: 350ms;
+            --transition-emphasis: 500ms;
             --ease-fluid: cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+            --ease-bounce: cubic-bezier(0.34, 1.4, 0.64, 1);
 
             /* Spacing */
             --space-1: 4px;
@@ -657,7 +657,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
             color: #9ca3af;
         }
 
@@ -727,7 +727,7 @@
             font-size: 11px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
             line-height: 22px;
         }
 
@@ -1133,7 +1133,7 @@
             background: #fff;
             cursor: pointer;
             color: #64748B;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
         }
 
         .code-file-actions button:hover {
@@ -1222,7 +1222,7 @@
             cursor: pointer;
             color: #64748B;
             border-radius: 4px;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
         }
 
         .code-search-nav button:hover {
@@ -1251,7 +1251,7 @@
             cursor: pointer;
             color: #64748B;
             border-radius: 4px;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
         }
 
         .code-search-close:hover {
@@ -2047,6 +2047,8 @@
 
         .codex-timeline {
             padding: 16px;
+            max-height: 500px;
+            overflow-y: auto;
         }
 
         .codex-timeline-list {
@@ -2222,7 +2224,7 @@
 
         .in-progress-node circle,
         .in-progress-node path {
-            animation: in-progress-pulse 2s infinite;
+            animation: in-progress-pulse 2.5s infinite;
             transform-origin: center;
             transform-box: fill-box;
             fill: #4ade80 !important;
@@ -2247,7 +2249,7 @@
         }
 
         .in-progress-legend-pulse {
-            animation: in-progress-pulse 2s infinite;
+            animation: in-progress-pulse 2.5s infinite;
         }
 
         /* Pending node in tree (fallback styling) */
@@ -2665,7 +2667,7 @@
             cursor: pointer;
             color: #8b949e;
             flex-shrink: 0;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
         }
 
         .copy-value-btn:hover {
@@ -3054,7 +3056,7 @@
             border-radius: 10px;
             background: var(--surface, #ffffff);
             cursor: pointer;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
             position: relative;
         }
 
@@ -4846,7 +4848,7 @@
             width: 100%;
             max-width: 420px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            animation: modalSlideIn 0.2s ease-out;
+            animation: modalSlideIn 0.3s ease-out;
         }
 
         @keyframes modalSlideIn {
@@ -5213,7 +5215,7 @@
             justify-content: center;
             cursor: pointer;
             z-index: 10;
-            transition: all 0.15s ease;
+            transition: all 0.2s ease;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         .modal-banner-close:hover {
@@ -5645,6 +5647,10 @@
             border-top: 1px solid #edf2f7;
             padding: 20px 32px;
             flex-shrink: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
         }
 
         .api-keys-footer-hint {
@@ -5701,10 +5707,8 @@
         .api-keys-footer-hint {
             font-size: 12px;
             color: #57606a;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #e1e4e8;
-            text-align: center;
+            text-align: left;
+            flex: 1;
         }
 
         .api-keys-footer-hint a {
@@ -7410,6 +7414,11 @@
 	            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 	            z-index: 10;
 	            white-space: nowrap;
+	            animation: speechBubblePeek 0.4s ease-out 0.2s both;
+	        }
+	        @keyframes speechBubblePeek {
+	            from { opacity: 0; transform: translateY(-8px); }
+	            to { opacity: 1; transform: translateY(0); }
 	        }
 	        /* Speech bubble tail pointing down */
 	        .plan-banner .speech-bubble-peek::after {
@@ -7500,12 +7509,9 @@
 	            background: white;
 	            border: 1px solid #e2e8f0;
 	            min-width: 60px;
-	        }
-	        .plan-msg.typing::after {
-	            content: '●●●';
-	            animation: typingPulse 1.4s infinite;
-	            letter-spacing: 2px;
-	            color: #64748b;
+	            display: flex;
+	            align-items: center;
+	            gap: 4px;
 	        }
 	        @keyframes typingPulse {
 	            0%, 60%, 100% { opacity: 0.3; }
@@ -7515,6 +7521,35 @@
 	            from { opacity: 0; transform: translateY(8px); }
 	            to { opacity: 1; transform: translateY(0); }
 	        }
+
+	        /* Markdown in chat messages */
+	        .plan-msg code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: ui-monospace, monospace; }
+	        .plan-msg pre { background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+	        .plan-msg pre code { background: none; padding: 0; color: inherit; }
+	        .plan-msg ul, .plan-msg ol { margin: 8px 0; padding-left: 20px; }
+	        .plan-msg li { margin: 4px 0; }
+	        .plan-msg h1, .plan-msg h2, .plan-msg h3 { margin: 12px 0 8px; font-weight: 600; }
+	        .plan-msg blockquote { border-left: 3px solid #cbd5e1; padding-left: 12px; color: #64748b; margin: 8px 0; }
+	        .plan-msg strong { font-weight: 600; }
+	        .plan-msg a { color: #2dd4bf; text-decoration: underline; }
+	        .plan-msg p { margin: 0 0 8px 0; }
+	        .plan-msg p:last-child { margin-bottom: 0; }
+
+	        /* Message wrapper with avatar */
+	        .plan-msg-wrapper { display: flex; gap: 10px; align-items: flex-start; max-width: 90%; }
+	        .plan-msg-wrapper.user { flex-direction: row-reverse; margin-left: auto; }
+	        .plan-msg-wrapper.assistant { margin-right: auto; }
+	        .plan-msg-avatar {
+	            width: 32px; height: 32px; border-radius: 50%;
+	            display: flex; align-items: center; justify-content: center;
+	            font-size: 10px; font-weight: 600; flex-shrink: 0; text-transform: uppercase;
+	        }
+	        .plan-msg-avatar.user { background: #0f172a; color: white; }
+	        .plan-msg-avatar.assistant { background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; }
+
+	        /* Contextual typing indicator */
+	        .thinking-label { font-size: 12px; color: #64748b; margin-right: 8px; font-weight: 500; }
+	        .thinking-dots { animation: typingPulse 1.4s infinite; letter-spacing: 2px; color: #64748b; }
 
 	        /* Input Area */
 	        #plan-panel .plan-footer {
@@ -7566,12 +7601,153 @@
 	            width: 20px;
 	            height: 20px;
 	        }
+	        .plan-send-btn:disabled {
+	            opacity: 0.5;
+	            cursor: not-allowed;
+	            transform: none !important;
+	        }
+	        .plan-send-btn:disabled:hover {
+	            background: #0f172a;
+	        }
+
+	        /* Smooth scroll for chat */
+	        #plan-panel .plan-body {
+	            scroll-behavior: smooth;
+	        }
+
 	        #plan-panel .plan-actions {
 	            display: flex;
 	            gap: 8px;
 	            justify-content: flex-end;
 	            margin-top: 12px;
 	        }
+
+	        /* Inline Plan Card - appears in chat when PLAN_STATUS: FINAL */
+	        .plan-card {
+	            margin: 16px 0;
+	            background: white;
+	            border: 1px solid #e5e7eb;
+	            border-radius: 12px;
+	            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+	            animation: planCardSlideIn 0.3s ease-out;
+	            overflow: hidden;
+	        }
+	        @keyframes planCardSlideIn {
+	            from {
+	                opacity: 0;
+	                transform: translateY(10px);
+	            }
+	            to {
+	                opacity: 1;
+	                transform: translateY(0);
+	            }
+	        }
+	        .plan-card-header {
+	            display: flex;
+	            align-items: center;
+	            gap: 10px;
+	            padding: 14px 16px;
+	            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+	            border-bottom: 1px solid #d1fae5;
+	        }
+	        .plan-card-icon {
+	            width: 20px;
+	            height: 20px;
+	            color: #10b981;
+	            flex-shrink: 0;
+	        }
+	        .plan-card-title {
+	            font-weight: 600;
+	            font-size: 14px;
+	            color: #065f46;
+	        }
+	        .plan-card-body {
+	            padding: 12px 16px;
+	        }
+	        .plan-card-preview {
+	            max-height: 200px;
+	            overflow-y: auto;
+	            background: #f8fafc;
+	            border-radius: 8px;
+	            padding: 12px;
+	            font-size: 13px;
+	            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+	            white-space: pre-wrap;
+	            word-break: break-word;
+	            color: #334155;
+	            border: 1px solid #e2e8f0;
+	        }
+	        .plan-card-actions {
+	            display: flex;
+	            gap: 10px;
+	            padding: 12px 16px;
+	            border-top: 1px solid #f1f5f9;
+	        }
+	        .plan-accept-btn {
+	            flex: 1;
+	            background: #10b981;
+	            color: white;
+	            border: none;
+	            border-radius: 8px;
+	            padding: 10px 16px;
+	            font-weight: 600;
+	            font-size: 14px;
+	            cursor: pointer;
+	            transition: background 0.2s, transform 0.1s;
+	        }
+	        .plan-accept-btn:hover {
+	            background: #059669;
+	            transform: translateY(-1px);
+	        }
+	        .plan-reject-btn {
+	            background: white;
+	            color: #64748b;
+	            border: 1px solid #e2e8f0;
+	            border-radius: 8px;
+	            padding: 10px 16px;
+	            font-weight: 500;
+	            font-size: 14px;
+	            cursor: pointer;
+	            transition: background 0.2s, border-color 0.2s;
+	        }
+	        .plan-reject-btn:hover {
+	            background: #f8fafc;
+	            border-color: #cbd5e1;
+	        }
+	        .plan-refine-btn {
+	            background: transparent;
+	            border: none;
+	            color: #2dd4bf;
+	            font-weight: 500;
+	            font-size: 14px;
+	            cursor: pointer;
+	            padding: 10px 12px;
+	            transition: color 0.2s;
+	        }
+	        .plan-refine-btn:hover {
+	            color: #14b8a6;
+	        }
+
+	        /* Hide footer Apply button when card is showing */
+	        #plan-panel.has-final-plan .plan-actions {
+	            display: none;
+	        }
+
+	        /* Plan card scrollbar */
+	        .plan-card-preview::-webkit-scrollbar { width: 6px; }
+	        .plan-card-preview::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+	        .plan-card-preview::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+	        .plan-card-preview::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+	        /* Focus states for accessibility */
+	        .plan-accept-btn:focus-visible,
+	        .plan-reject-btn:focus-visible,
+	        .plan-refine-btn:focus-visible,
+	        .plan-send-btn:focus-visible {
+	            outline: 2px solid #2dd4bf;
+	            outline-offset: 2px;
+	        }
+
 	        /* ========== End Plan Panel Styles ========== */
 
 	        /* ========== Bandit History Slide-Out Panel ========== */
@@ -7750,7 +7926,7 @@
 	            font-size: 12px;
 	            border-radius: 6px;
 	            cursor: pointer;
-	            transition: all 0.15s ease;
+	            transition: all 0.2s ease;
 	        }
 
 	        .bandit-history-footer .btn-danger {
@@ -7860,10 +8036,19 @@
 	            font-weight: 600;
 	        }
 
-	        .backend-sparkline {
+	        .sparkline-wrapper {
+	            position: relative;
 	            width: 100%;
 	            height: 32px;
 	            margin: 8px 0;
+	        }
+
+	        .backend-sparkline {
+	            position: absolute;
+	            top: 0;
+	            left: 0;
+	            width: 100% !important;
+	            height: 100% !important;
 	        }
 
 	        .backend-card-stats {
@@ -7970,6 +8155,20 @@
 	        .rolling-chart-header select:focus {
 	            outline: none;
 	            border-color: var(--accent-teal, #2DD4BF);
+	        }
+
+	        .rolling-chart-wrapper {
+	            position: relative;
+	            width: 100%;
+	            height: 180px;
+	        }
+
+	        #rolling-performance-chart {
+	            position: absolute;
+	            top: 0;
+	            left: 0;
+	            width: 100% !important;
+	            height: 100% !important;
 	        }
 
 	        /* ========== End Bandit History Visualizations ========== */
@@ -14069,8 +14268,8 @@ ${'='.repeat(80)}
                                     </div>
                                 </div>
                                 <div id="codex-auth-view" style="flex: 1; display: flex; align-items: center; justify-content: center;">
-                                    <div style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
-                                        <button class="secondary" onclick="showOAuthHelp('codex')" style="background: #10a37f; color: white; border: none; padding: 10px 16px; font-weight: 600; border-radius: 6px; width: 220px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                    <div id="codex-auth-container" style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
+                                        <button id="codex-login-btn" class="secondary" onclick="startCodexDeviceAuth()" style="background: #10a37f; color: white; border: none; padding: 10px 16px; font-weight: 600; border-radius: 6px; width: 220px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; gap: 8px;">
                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                                 <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.8956zm16.0993 3.8558L12.6 8.3829l2.02-1.1638a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997z" fill="white"/>
                                             </svg>
@@ -16910,13 +17109,19 @@ ${'='.repeat(80)}
         let inProgressPollingInterval = null;
         let inProgressTimeTickInterval = null;
         // Use window.inProgressStartedAt to avoid scope issues between displayInProgressDetails() and polling
-        
+
+        // Incremental fetch state: track last fetched index and accumulated events per session
+        const sessionFetchState = {};  // { sessionId: { lastIdx: number, events: [] } }
+
+        // Latest event timestamp for clock sync (updated from server)
+        window.latestEventTimestamp = null;
+
         function startInProgressPolling() {
             stopInProgressPolling();
 
             console.log('[InProgress] Starting polling with window.inProgressStartedAt:', window.inProgressStartedAt);
 
-            // Time ticking interval - updates elapsed time every second
+            // Time ticking interval - updates elapsed time every second with sync indicator
             inProgressTimeTickInterval = setInterval(() => {
                 if (!window.currentInProgressSession || !window.inProgressStartedAt) {
                     console.log('[InProgress] Time tick skipped - no session or startedAt');
@@ -16926,57 +17131,88 @@ ${'='.repeat(80)}
                 const now = Date.now() / 1000;
                 const elapsedTime = Math.floor(now - window.inProgressStartedAt);
                 const elapsedStr = formatElapsedTime(elapsedTime);
-                
+
+                // Sync indicator: green dot if we've received events recently, yellow if stale
+                const isSynced = window.latestEventTimestamp && (now - window.latestEventTimestamp) < 5;
+                const isStale = window.latestEventTimestamp && (now - window.latestEventTimestamp) >= 5 && (now - window.latestEventTimestamp) < 30;
+                const syncIndicator = isSynced ? '<span style="color:#4ade80;">●</span>' :
+                                      isStale ? '<span style="color:#fbbf24;">●</span>' :
+                                      '<span style="color:#ef4444;">●</span>';
+
                 // Update just the time text without re-rendering the whole header
                 const timeElement = document.querySelector('#node-summary .in-progress-time');
                 if (timeElement) {
-                    timeElement.textContent = `Running for ${elapsedStr}`;
+                    timeElement.innerHTML = `Running for ${elapsedStr} ${syncIndicator}`;
                 } else {
                     console.warn('[InProgress] Time element not found');
                 }
             }, 1000);
-            
+
             inProgressPollingInterval = setInterval(async () => {
                 if (!window.currentInProgressSession) {
                     stopInProgressPolling();
                     return;
                 }
-                
+
                 const { sessionId, nodeData } = window.currentInProgressSession;
-                
+
+                // Get or initialize fetch state for this session
+                if (!sessionFetchState[sessionId]) {
+                    sessionFetchState[sessionId] = { lastIdx: 0, events: [] };
+                }
+                const fetchState = sessionFetchState[sessionId];
+
                 try {
-                    const response = await fetch(`/api/session_state?session_id=${encodeURIComponent(sessionId)}`);
+                    // Incremental fetch: only request events from lastIdx onwards
+                    const response = await fetch(`/api/session_state?session_id=${encodeURIComponent(sessionId)}&since_idx=${fetchState.lastIdx}`);
                     const state = await response.json();
-                    
+
                     if (state.status === 'not_found') {
-                        // Session finished - refresh tree to get the completed node
+                        // Session finished - cleanup and refresh tree
+                        delete sessionFetchState[sessionId];
                         stopInProgressPolling();
                         window.currentInProgressSession = null;
-                        
+
                         // Trigger tree refresh
                         if (window.loadDatabaseSilent && window.currentDbPath) {
                             window.loadDatabaseSilent(window.currentDbPath);
                         }
                         return;
                     }
-                    
+
+                    // Append new events to accumulated list
+                    const newEvents = state.events || [];
+                    if (newEvents.length > 0) {
+                        fetchState.events.push(...newEvents);
+                        console.log('[InProgress] Incremental fetch: +', newEvents.length, 'events, total:', fetchState.events.length);
+                    }
+
+                    // Update lastIdx from total_count for next fetch
+                    if (typeof state.total_count === 'number') {
+                        fetchState.lastIdx = state.total_count;
+                    }
+
+                    // Sync clock to latest event timestamp from server
+                    if (state.latest_event_timestamp) {
+                        window.latestEventTimestamp = state.latest_event_timestamp;
+                    }
+
                     // Update just the timeline content (not the entire tab, to preserve collapsible state)
                     const programId = String(nodeData.id || `live_${sessionId}`);
                     const domSafeId = makeDomSafeId(programId);
                     const timelineContainerId = `codex-timeline-${domSafeId}`;
                     const timelineContainer = document.getElementById(timelineContainerId);
-                    
-                    console.log('[InProgress] Polling update - container:', timelineContainerId, 'found:', !!timelineContainer, 'events:', state.events?.length || 0);
-                    
+
+                    console.log('[InProgress] Polling update - container:', timelineContainerId, 'found:', !!timelineContainer, 'total events:', fetchState.events.length);
+
                     if (timelineContainer) {
-                        // Normalize events using the same function as completed nodes
-                        const events = state.events || [];
-                        const normalizedEvents = normalizeSessionEvents(events.slice(-MAX_TIMELINE_EVENTS));
-                        
+                        // Normalize ALL accumulated events (use slice to limit to MAX_TIMELINE_EVENTS)
+                        const normalizedEvents = normalizeSessionEvents(fetchState.events.slice(-MAX_TIMELINE_EVENTS));
+
                         // Track previous event count to know when to update
                         const previousEventCount = codexTimelineState[programId]?.eventCount || 0;
                         const currentEventCount = normalizedEvents.length;
-                        
+
                         // Update timeline state
                         codexTimelineState[programId] = {
                             events: normalizedEvents,
@@ -16984,12 +17220,12 @@ ${'='.repeat(80)}
                             domSafeId,
                             isLive: true,
                         };
-                        
+
                         // Update if event count changed (more reliable than innerHTML comparison)
                         if (currentEventCount !== previousEventCount || previousEventCount === 0) {
                             console.log('[InProgress] Timeline updated - events:', previousEventCount, '->', currentEventCount);
-                            const newHtml = normalizedEvents.length 
-                                ? renderTimelineEvents(normalizedEvents) 
+                            const newHtml = normalizedEvents.length
+                                ? renderTimelineEvents(normalizedEvents)
                                 : '<div class="codex-timeline-empty">Waiting for agent activity...</div>';
                             timelineContainer.innerHTML = newHtml;
                             // Scroll to bottom to show latest events
@@ -16998,44 +17234,45 @@ ${'='.repeat(80)}
                     } else {
                         console.warn('[InProgress] Timeline container not found:', timelineContainerId);
                     }
-                    
+
                     // Also update Evaluation tab if this is an eval session
                     const sessionType = state.meta?.session_kind || 'edit';
                     if (sessionType.includes('eval')) {
                         const evalTimelineId = `eval-timeline-live-${domSafeId}`;
                         const evalContainer = document.getElementById(evalTimelineId);
                         if (evalContainer) {
-                            const normalizedEvalEvents = normalizeSessionEvents(state.events || []);
+                            // Use accumulated events for eval timeline too
+                            const normalizedEvalEvents = normalizeSessionEvents(fetchState.events);
                             // Track eval event count separately
                             const evalStateKey = `${programId}_eval`;
                             const previousEvalCount = codexTimelineState[evalStateKey]?.eventCount || 0;
                             const currentEvalCount = normalizedEvalEvents.length;
-                            
+
                             codexTimelineState[evalStateKey] = { eventCount: currentEvalCount };
-                            
+
                             if (currentEvalCount !== previousEvalCount || previousEvalCount === 0) {
                                 console.log('[InProgress] Eval timeline updated - events:', previousEvalCount, '->', currentEvalCount);
-                                const newEvalHtml = normalizedEvalEvents.length 
-                                    ? renderTimelineEvents(normalizedEvalEvents) 
+                                const newEvalHtml = normalizedEvalEvents.length
+                                    ? renderTimelineEvents(normalizedEvalEvents)
                                     : '<div class="codex-timeline-empty">Waiting for evaluator activity...</div>';
                                 evalContainer.innerHTML = newEvalHtml;
                                 evalContainer.scrollTop = evalContainer.scrollHeight;
                             }
                         }
                     }
-                    
+
                     // Update started_at for time-ticking if available
                     if (state.meta?.started_at) {
                         window.inProgressStartedAt = state.meta.started_at;
                     }
-                    
+
                     // Don't re-render the full header on each poll - just let time-ticking handle time updates
                     // Only update if model info changed (which it shouldn't during a session)
-                    
+
                 } catch (error) {
                     console.warn('[InProgress] Polling error:', error);
                 }
-            }, 2000); // Poll every 2 seconds
+            }, 500); // Poll every 500ms (reduced from 2000ms since payloads are now tiny)
         }
         
         function stopInProgressPolling() {
@@ -17047,9 +17284,16 @@ ${'='.repeat(80)}
                 clearInterval(inProgressTimeTickInterval);
                 inProgressTimeTickInterval = null;
             }
+
+            // Clean up incremental fetch state for the current session
+            if (window.currentInProgressSession?.sessionId) {
+                delete sessionFetchState[window.currentInProgressSession.sessionId];
+            }
+
             window.inProgressStartedAt = null;
             window.currentInProgressSession = null;
-            
+            window.latestEventTimestamp = null;
+
             // Clean up codexTimelineState to prevent memory leaks
             if (typeof codexTimelineState !== 'undefined' && codexTimelineState.eventIds) {
                 codexTimelineState.eventIds.clear();
@@ -26098,6 +26342,26 @@ ${'='.repeat(80)}
                     <input type="text" id="custom-provider-name" placeholder="e.g., LMStudio, Ollama, Together AI">
                 </div>
                 <div class="custom-provider-field">
+                    <label>Logo <span>(optional)</span></label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="custom-provider-logo-path" placeholder="Select an image..." readonly style="flex: 1; cursor: pointer;" onclick="openCustomProviderImagePicker()">
+                        <button type="button" onclick="openCustomProviderImagePicker()" title="Browse for image" style="padding: 10px 14px; background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4a5568" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                            </svg>
+                        </button>
+                        <button type="button" onclick="clearCustomProviderLogo()" title="Clear logo" style="padding: 10px 12px; background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 10px; cursor: pointer; display: none;" id="custom-provider-logo-clear">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e53e3e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="custom-provider-logo-preview" style="margin-top: 8px; display: none;">
+                        <img id="custom-provider-logo-img" src="" alt="Logo preview" style="max-height: 48px; max-width: 100%; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    </div>
+                    <input type="hidden" id="custom-provider-logo-data">
+                </div>
+                <div class="custom-provider-field">
                     <label>API Endpoint <span>(required)</span></label>
                     <select id="custom-provider-preset" onchange="applyEndpointPreset(this.value)" style="width: 100%; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 14px; margin-bottom: 8px;">
                         <option value="">Select a preset or enter custom...</option>
@@ -26118,10 +26382,6 @@ ${'='.repeat(80)}
                     <label>Environment Variable <span>(for API key)</span></label>
                     <input type="text" id="custom-provider-env-var" placeholder="e.g., TOGETHER_API_KEY">
                     <p style="font-size: 11px; color: #718096; margin-top: 4px;">💡 Local endpoints (localhost) don't require an API key</p>
-                </div>
-                <div class="custom-provider-field">
-                    <label>Key Placeholder <span>(optional)</span></label>
-                    <input type="text" id="custom-provider-placeholder" placeholder="e.g., tog-...">
                 </div>
             </div>
             <div class="custom-provider-dialog-footer">
@@ -26979,7 +27239,7 @@ ${'='.repeat(80)}
         </div>
 
         <!-- Plan-with-AI Slide-out Panel (Card Stack) -->
-        <div id="plan-panel">
+        <div id="plan-panel" role="dialog" aria-labelledby="plan-panel-title" aria-modal="true">
             <!-- Banner Header with speech bubble peek -->
             <div class="modal-header modal-banner plan-banner">
                 <div class="speech-bubble-peek">How can I help?</div>
@@ -27001,6 +27261,7 @@ ${'='.repeat(80)}
             <div class="plan-footer">
                 <div class="plan-input-container">
                     <textarea id="plan-user-input"
+                              aria-label="Describe your goal for the AI planning assistant"
                               placeholder="Describe what you want to achieve, or ask questions..."
                               rows="2"></textarea>
                     <button class="plan-send-btn" onclick="sendPlanMessage()" title="Send (Enter)">
@@ -27019,7 +27280,7 @@ ${'='.repeat(80)}
     </div>
 
     <!-- Toast Container -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <script>
         // Unified API Key Modal Functions
@@ -27035,11 +27296,11 @@ ${'='.repeat(80)}
             openai: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364l2.0201-1.1638a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`,
             anthropic: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.304 3.541h-3.672l6.696 16.918h3.672zm-10.608 0L0 20.459h3.744l1.464-3.816h6.624l1.464 3.816h3.744L10.344 3.541zm-.264 10.194 2.088-5.4 2.064 5.4z"/></svg>`,
             google: `<svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>`,
-            jules: `<svg viewBox="0 0 24 24" fill="#4285F4"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/><circle cx="12" cy="11" r="3"/></svg>`,
+            jules: `<svg viewBox="0 0 512 540" fill="#642cc2"><path d="m487.4 436.5c-14.3 0-25.5 11.6-25.5 25.5 0 14.3-11.6 25.5-25.5 25.5-13.9 0-26.4-11.1-26.4-25V331.9c3.2-6.5 5.1-13.4 5.1-21.3V161.1C415.2 72.2 343 0 254.6 0 166.2 0 93.5 72.2 93.5 161.1v149.5c0 10.2 3.2 19.9 8.8 27.8v124c0 14.4-11.6 25.5-25.9 25.5-14.4 0-25.5-11.6-25.5-25.5 0-13.9-11.6-25.5-25.5-25.5C11.1 437 0 448.5 0 462.4c0 40.7 31.9 73.6 71.7 76.4 1.9.5 3.2.5 5.1.5s3.7 0 5.1-.5c39.8-2.8 71.7-35.6 71.7-76.4V359.7s-1.4-21.8 17.1-21.8 17.1 21.8 17.1 21.8v101.8c0 14.4 11.6 25.5 25.5 25.5s25.5-11.6 25.5-25.5V359.7s-3.7-21.8 17.1-21.8 17.1 21.8 17.1 21.8v101.8c0 14.4 11.6 25.5 25.5 25.5s25.5-11.6 25.5-25.5V359.7s-1.4-21.8 17.1-21.8 17.1 21.8 17.1 21.8v102.8c0 40.7 31.9 73.6 71.7 76.4 1.9.5 3.2.5 5.1.5s3.7 0 5.1-.5c40.3-2.8 71.7-35.6 71.7-76.4.9-14.3-10.6-25.9-24.5-25.9M170.3 291.2c-14.3 0-25.5-14.4-25.5-31.9s11.6-31.9 25.5-31.9 25.5 14.4 25.5 31.9c.5 17.6-11.1 31.9-25.5 31.9m171.3 0c-14.4 0-25.5-14.4-25.5-31.9s11.6-31.9 25.5-31.9 25.5 14.4 25.5 31.9c.5 17.6-11.1 31.9-25.5 31.9"/></svg>`,
             github: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>`,
-            deepseek: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/><path d="M8 12c0-2.21 1.79-4 4-4s4 1.79 4 4-1.79 4-4 4-4-1.79-4-4zm2 0c0 1.1.9 2 2 2s2-.9 2-2-.9-2-2-2-2 .9-2 2z"/><path d="M6.5 8.5l1.5 1.5M16 8.5l1.5-1.5M6.5 15.5l1.5-1.5M16 15.5l1.5 1.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>`,
-            openrouter: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="12" cy="19" r="2"/><path d="M12 7v4M12 15v2M7 12h4M15 12h2" stroke-linecap="round"/><path d="M9 9l-2 1M15 9l2 1M9 15l-2-1M15 15l2-1" stroke-linecap="round"/></svg>`,
-            azure: `<svg viewBox="0 0 24 24" fill="#0078D4"><path d="M13.05 4.24L6.56 18.05c-.18.38.11.81.53.81h2.06c.26 0 .5-.15.6-.39l1.24-2.78h5.35l-.77 2.78c-.07.24.11.48.36.48h2.1c.22 0 .42-.15.48-.36l3.93-13.56c.1-.34-.17-.68-.53-.68h-2.06c-.24 0-.45.15-.52.38L16.46 12h-5.1l2.87-7.38c.1-.26-.09-.53-.37-.53h-2.4c-.24 0-.45.16-.52.4l-.02.01-.87-.26z"/></svg>`,
+            deepseek: `<svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#4D6BFE"/><path fill="#fff" d="M19.5 7.8c-.15-.08-.22.08-.3.15l-.08.08c-.22.22-.45.38-.75.38-.45 0-.83.15-1.2.45-.08-.45-.3-.75-.68-.83-.22-.08-.38-.15-.52-.38-.08-.15-.15-.3-.15-.45 0-.08-.08-.15-.15-.22-.08 0-.15.08-.22.15-.15.3-.22.68-.22 1.05 0 .83.38 1.5 1.05 1.88.08.08.08.08.08.15-.08.15-.08.3-.15.45 0 .08-.08.15-.15.08-.38-.15-.68-.38-.98-.68-.45-.45-.9-.98-1.43-1.35l-.38-.22c-.52-.52.08-.98.22-1.05.15-.08.08-.22-.45-.22-.45 0-.9.15-1.5.38-.08 0-.15.08-.22.08-.52-.08-1.05-.15-1.58-.08-1.05.15-1.88.6-2.48 1.43-.75.98-.9 2.18-.68 3.38.22 1.28.9 2.33 1.88 3.15 1.05.83 2.18 1.28 3.53 1.2.83-.08 1.73-.15 2.78-1.05.22.15.52.15.98.22.38 0 .68 0 .98-.08.38-.08.38-.45.22-.52-1.2-.52-.9-.3-1.2-.52.6-.75 1.5-1.43 1.88-3.9 0-.22 0-.3 0-.45 0-.08 0-.15.15-.15.3 0 .6-.15.83-.22.75-.45 1.05-1.13 1.13-1.95 0-.15 0-.22-.15-.3zm-6.68 7.5c-1.13-.9-1.73-1.2-1.95-1.2-.22 0-.15.22-.15.45.08.15.15.3.22.38.08.08.08.22-.08.3-.38.22-1.05-.08-1.05-.08-.75-.45-1.35-1.05-1.8-1.8-.45-.75-.98-1.58-.68-2.48 0-.22.08-.3.3-.3.3-.08.6-.08.83 0 1.2.15 2.18.68 3 1.5.45.45.83 1.05 1.2 1.58.38.6.83 1.13 1.35 1.65.22.15.38.3.52.38-.45.08-1.2.08-1.73-.38zm.52-3.6c0-.08.08-.15.15-.15h.08s.08 0 .08.08c0 0 .08.08.08.15 0 .08 0 .15-.15.15-.08 0-.15-.08-.15-.15 0 0 0-.08 0-.08zm1.65.98c-.08 0-.15.08-.3.08-.15 0-.38-.08-.45-.15-.15-.15-.22-.22-.3-.45 0-.08 0-.22 0-.3.08-.15 0-.3-.15-.38-.08-.08-.22-.08-.38-.08-.08 0-.08 0-.15-.08-.08 0-.08-.08-.08-.22 0 0 .08-.08.08-.15.22-.08.45-.08.6 0 .22.08.38.22.52.45.22.22.22.3.38.52.08.15.15.3.22.45 0 .08 0 .15-.08.22 0 0-.08.08-.08.08z"/></svg>`,
+            openrouter: `<svg viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M16.8 2l7.2 4.1v.1l-7.3 4-.2-2.1-.8 0c-1.1 0-1.6 0-2.3.1-1.1.2-2 .6-3.1 1.4l-2.2 1.5c-.3.2-.5.3-.7.5l-.5.3-.4.2.4.2.5.3c.5.3 1.2.8 2.7 1.9 1.1.8 2.1 1.2 3.1 1.4l.3 0c.7.1 1.4.1 2.8 0l0-2.2 7.2 4.1v.1l-7.3 4 0-1.9-.6 0c-1.4 0-2.1 0-3.1-.2-1.7-.3-3.2-.9-4.9-2.1l-2.2-1.5c-.4-.3-.6-.4-.8-.5l-.5-.3c-.3-.1-.5-.3-.8-.4-1-.5-3.3-1.1-3.9-1.1v-4.2l.1 0c.6 0 2.9-.6 3.8-1.1l1-.6.4-.3c.4-.3 1.1-.7 2.7-1.9 1.6-1.1 3.2-1.8 4.9-2.1 1.1-.2 2-.2 3.8-.1l0-1.9z" fill="#94a5b9"/></svg>`,
+            azure: `<svg viewBox="0 0 18 18" fill="#0078D4"><path d="M15.93 17.04H6.38l5.81-6.76-2.47-5.02L15.93.04v17zM10.12 1L3.4 7.77 0 15.43l4.05-.42L10.12 1z"/></svg>`,
             custom: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>`
         };
 
@@ -27132,7 +27393,7 @@ ${'='.repeat(80)}
             localStorage.setItem('shinka_custom_providers', JSON.stringify(providers));
         }
 
-        function addCustomProvider(name, envVar, placeholder, baseUrl, models) {
+        function addCustomProvider(name, envVar, placeholder, baseUrl, models, logo) {
             const id = 'custom_' + name.toLowerCase().replace(/[^a-z0-9]/g, '_');
             const customs = getCustomProviders();
             if (customs.some(p => p.id === id)) return false;
@@ -27147,7 +27408,8 @@ ${'='.repeat(80)}
                 baseUrl: baseUrl || '',
                 models: models || [],
                 isBuiltIn: false,
-                isLocal: isLocal
+                isLocal: isLocal,
+                logo: logo || null
             });
             saveCustomProviders(customs);
             return true;
@@ -27191,9 +27453,9 @@ ${'='.repeat(80)}
         }
 
         function setApiKey(providerId, key) {
-            // Only cache the masked version for display, never store full key in browser
+            // Cache the full key - password input hides it, reveal button shows it
             if (key) {
-                credentialStatusCache[providerId] = maskApiKey(key);
+                credentialStatusCache[providerId] = key;
             } else {
                 delete credentialStatusCache[providerId];
             }
@@ -27208,8 +27470,12 @@ ${'='.repeat(80)}
                     // Update cache with status (we don't get actual keys, just configured status)
                     for (const [providerId, status] of Object.entries(data.providers)) {
                         if (status.configured) {
-                            // Mark as configured with a placeholder
-                            credentialStatusCache[providerId] = '••••••••••••';
+                            // Only set placeholder if we don't already have a real key cached
+                            // A real key won't contain bullet characters
+                            const existingKey = credentialStatusCache[providerId];
+                            if (!existingKey || existingKey.includes('•')) {
+                                credentialStatusCache[providerId] = '••••••••••••';
+                            }
                         } else {
                             delete credentialStatusCache[providerId];
                         }
@@ -27237,8 +27503,12 @@ ${'='.repeat(80)}
         }
 
         function validateKeyFormat(providerId, key) {
+            // Skip validation for placeholder/masked values
+            if (!key || key.includes('•')) {
+                return null;
+            }
             const prefix = getProviderPrefix(providerId);
-            if (prefix && key && !key.startsWith(prefix)) {
+            if (prefix && !key.startsWith(prefix)) {
                 return `Key should start with ${prefix}`;
             }
             return null;
@@ -27247,6 +27517,12 @@ ${'='.repeat(80)}
         function validateInput(providerId, input) {
             const msgEl = document.getElementById(`validation-msg-${providerId}`);
             const error = validateKeyFormat(providerId, input.value);
+
+            // Cache the typed key so it survives re-renders
+            if (input.value && !input.value.includes('•')) {
+                credentialStatusCache[providerId] = input.value;
+            }
+
             if (error) {
                 input.classList.add('invalid');
                 if (msgEl) {
@@ -27271,9 +27547,12 @@ ${'='.repeat(80)}
                 const key = getApiKey(provider.id);
                 const isConfigured = !!key;
                 const isExpanded = expandedProvider === provider.id;
-                const logo = providerLogos[provider.iconClass] || providerLogos.custom || '';
+                // Use custom logo data URL if available, otherwise fall back to SVG icons
+                const logo = provider.logo
+                    ? `<img src="${provider.logo}" alt="${provider.name}" style="width: 100%; height: 100%; object-fit: contain;">`
+                    : (providerLogos[provider.iconClass] || providerLogos.custom || '');
                 const prefix = getProviderPrefix(provider.id);
-                
+
                 return `
                     <div class="api-key-row ${isExpanded ? 'expanded' : ''}" data-provider="${provider.id}" onclick="handleRowClick(event, '${provider.id}')">
                         <div class="api-key-provider-logo ${provider.iconClass}">${logo}</div>
@@ -27344,8 +27623,10 @@ ${'='.repeat(80)}
                 const input = document.getElementById(`api-key-input-${expandedProvider}`);
                 if (input) {
                     setTimeout(() => input.focus(), 50);
-                    // Trigger validation immediately if there's a key
-                    if (input.value) validateInput(expandedProvider, input);
+                    // Trigger validation only for real keys, not placeholders
+                    if (input.value && !input.value.includes('•')) {
+                        validateInput(expandedProvider, input);
+                    }
                 }
             }
         }
@@ -27632,7 +27913,9 @@ ${'='.repeat(80)}
             document.getElementById('custom-provider-base-url').value = '';
             document.getElementById('custom-provider-models').value = '';
             document.getElementById('custom-provider-env-var').value = '';
-            document.getElementById('custom-provider-placeholder').value = '';
+
+            // Clear logo fields
+            clearCustomProviderLogo();
 
             // Focus first input
             setTimeout(() => {
@@ -27641,6 +27924,34 @@ ${'='.repeat(80)}
 
             // Set up validation
             setupCustomProviderValidation();
+        }
+
+        async function openCustomProviderImagePicker() {
+            try {
+                const response = await fetch('/api/image_picker_native');
+                const data = await response.json();
+
+                if (data.ok && data.data_url) {
+                    document.getElementById('custom-provider-logo-path').value = data.filename || data.path;
+                    document.getElementById('custom-provider-logo-data').value = data.data_url;
+                    document.getElementById('custom-provider-logo-img').src = data.data_url;
+                    document.getElementById('custom-provider-logo-preview').style.display = 'block';
+                    document.getElementById('custom-provider-logo-clear').style.display = 'flex';
+                } else if (data.error) {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                console.error('Image picker error:', err);
+                showToast('Failed to open image picker', 'error');
+            }
+        }
+
+        function clearCustomProviderLogo() {
+            document.getElementById('custom-provider-logo-path').value = '';
+            document.getElementById('custom-provider-logo-data').value = '';
+            document.getElementById('custom-provider-logo-img').src = '';
+            document.getElementById('custom-provider-logo-preview').style.display = 'none';
+            document.getElementById('custom-provider-logo-clear').style.display = 'none';
         }
 
         function hideAddCustomProviderDialog() {
@@ -27699,7 +28010,7 @@ ${'='.repeat(80)}
             const baseUrl = document.getElementById('custom-provider-base-url').value.trim();
             const modelsStr = document.getElementById('custom-provider-models').value.trim();
             const envVar = document.getElementById('custom-provider-env-var').value.trim();
-            const placeholder = document.getElementById('custom-provider-placeholder').value.trim() || 'Enter API key...';
+            const logoData = document.getElementById('custom-provider-logo-data').value || null;
 
             if (!name || !baseUrl) {
                 showToast('Please fill in the provider name and API endpoint', 'error');
@@ -27726,14 +28037,14 @@ ${'='.repeat(80)}
                         base_url: baseUrl,
                         models: models,
                         env_var: finalEnvVar,
-                        placeholder: placeholder,
+                        logo: logoData,
                     }),
                 });
 
                 const result = await response.json();
                 if (result.ok) {
                     // Also save to localStorage for UI
-                    addCustomProvider(name, finalEnvVar, placeholder, baseUrl, models);
+                    addCustomProvider(name, finalEnvVar, 'Enter API key...', baseUrl, models, logoData);
                     showToast(`${name} provider added`, 'success');
                     hideAddCustomProviderDialog();
                     renderApiKeysList();
@@ -27743,7 +28054,7 @@ ${'='.repeat(80)}
             } catch (err) {
                 console.error('Failed to save custom provider:', err);
                 // Fall back to localStorage only
-                const success = addCustomProvider(name, finalEnvVar, placeholder, baseUrl, models);
+                const success = addCustomProvider(name, finalEnvVar, 'Enter API key...', baseUrl, models, logoData);
                 if (success) {
                     showToast(`${name} provider added (local only)`, 'success');
                     hideAddCustomProviderDialog();
@@ -27784,7 +28095,7 @@ ${'='.repeat(80)}
         const oauthHelpMessages = {
             codex: {
                 title: 'Codex CLI Authentication',
-                message: 'To authenticate with OpenAI, run:\n\ncodex login\n\nThis opens a browser for ChatGPT OAuth login.\n\nFor API key authentication:\necho $OPENAI_API_KEY | codex login --with-api-key',
+                message: 'Authentication Options:\n\n1. DEVICE AUTH (Recommended for ChatGPT subscribers)\n   • First: Enable device-auth in ChatGPT Security Settings\n     → chatgpt.com/settings/security\n   • Then run: codex login --device-auth\n   • Browser will open automatically\n\n2. API KEY\n   • Set OPENAI_API_KEY environment variable\n   • Or run: echo $OPENAI_API_KEY | codex login --with-api-key',
                 docsUrl: 'https://github.com/openai/codex'
             },
             gemini: {
@@ -27799,10 +28110,58 @@ ${'='.repeat(80)}
             }
         };
 
+        // Codex device auth - opens browser immediately and shows device code
+        const CODEX_DEVICE_AUTH_URL = 'https://auth.openai.com/codex/device';
+
+        async function startCodexDeviceAuth() {
+            const btn = document.getElementById('codex-login-btn');
+            const container = document.getElementById('codex-auth-container');
+
+            // Open browser IMMEDIATELY - don't wait for API
+            window.open(CODEX_DEVICE_AUTH_URL, '_blank');
+
+            // Update button to show loading state
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spinner" style="width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></span> Getting code...`;
+
+            try {
+                const response = await fetch('/api/codex_device_auth', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.ok && data.code) {
+                    // Show the device code prominently
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 8px;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px;">Enter this code in your browser:</div>
+                            <div style="font-size: 28px; font-weight: 700; font-family: monospace; letter-spacing: 4px; color: #10a37f; background: #f0fdf4; padding: 12px 20px; border-radius: 8px; border: 2px solid #10a37f;">${data.code}</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 8px;">Code expires in 15 minutes</div>
+                            <button onclick="refreshCodexStatus()" style="margin-top: 12px; padding: 8px 16px; background: #10a37f; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">I've completed login</button>
+                        </div>
+                    `;
+                } else {
+                    // Show error with retry option
+                    const errorMsg = data.error || 'Could not get device code';
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 8px;">
+                            <div style="font-size: 13px; color: #d32f2f; margin-bottom: 12px;">${errorMsg}</div>
+                            <button onclick="location.reload()" style="padding: 8px 16px; background: #10a37f; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 8px;">
+                        <div style="font-size: 13px; color: #d32f2f; margin-bottom: 12px;">Error: ${err.message}</div>
+                        <button onclick="location.reload()" style="padding: 8px 16px; background: #10a37f; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
         function showOAuthHelp(provider) {
             const config = oauthHelpMessages[provider];
             if (!config) return;
-            
+
             // Create and show help modal
             const existingModal = document.getElementById('oauth-help-modal');
             if (existingModal) existingModal.remove();
@@ -28499,8 +28858,9 @@ ${'='.repeat(80)}
 
                         if (badge && option) {
                             const backendInfo = data.backends[backend];
-                            if (backendInfo && backendInfo.authenticated) {
-                                badge.textContent = 'Ready';
+                            if (backendInfo && backendInfo.available) {
+                                // Show plan if available, otherwise "Ready"
+                                badge.textContent = backendInfo.plan || 'Ready';
                                 badge.className = 'backend-auth-badge authenticated';
                                 option.classList.remove('unavailable');
                             } else {
@@ -28908,7 +29268,9 @@ ${'='.repeat(80)}
                             <span class="backend-name" style="color: ${color}">${backend}</span>
                             <span class="backend-win-rate">${winRatePercent}% win</span>
                         </div>
-                        <canvas class="backend-sparkline" data-backend="${backend}" width="120" height="32"></canvas>
+                        <div class="sparkline-wrapper">
+                            <canvas class="backend-sparkline" data-backend="${backend}"></canvas>
+                        </div>
                         <div class="backend-card-stats">
                             <span>↑ ${(s.avg_reward || 0).toFixed(3)} avg</span>
                             <span>${s.total_selections || 0} sel</span>
@@ -28939,7 +29301,9 @@ ${'='.repeat(80)}
                             <option value="100">Last 100</option>
                         </select>
                     </div>
-                    <canvas id="rolling-performance-chart" height="180"></canvas>
+                    <div class="rolling-chart-wrapper">
+                        <canvas id="rolling-performance-chart"></canvas>
+                    </div>
                 </div>
             `;
 
@@ -29714,8 +30078,14 @@ ${'='.repeat(80)}
 
 	            // If there's an existing session, resume polling
 	            if (state.session_id && !planPollTimer) {
-	                planPollTimer = setInterval(pollPlanSessionOnce, 1200);
+	                planPollTimer = setInterval(pollPlanSessionOnce, 600);
 	            }
+
+	            // Focus the input after panel animation completes
+	            setTimeout(() => {
+	                const inputEl = document.getElementById('plan-user-input');
+	                if (inputEl) inputEl.focus();
+	            }, 100);
 	        }
 
 	        function closePlanPanel() {
@@ -29793,7 +30163,7 @@ ${'='.repeat(80)}
 	                state.session_id = data.session_id;
 
 	                if (!planPollTimer) {
-	                    planPollTimer = setInterval(pollPlanSessionOnce, 1200);
+	                    planPollTimer = setInterval(pollPlanSessionOnce, 600);
 	                }
 	                await pollPlanSessionOnce();
 	                return true;
@@ -29805,6 +30175,7 @@ ${'='.repeat(80)}
 	        async function sendPlanMessage() {
 	            const state = _getActivePlanState();
 	            const inputEl = document.getElementById('plan-user-input');
+	            const sendBtn = document.querySelector('.plan-send-btn');
 	            const msg = inputEl.value.trim();
 	            if (!msg) return;
 
@@ -29814,6 +30185,9 @@ ${'='.repeat(80)}
 	                showPlanError('🐟 Oops! I need an API key to help you plan.\n\nPlease set your OpenAI API key in the Settings tab, then come back here!');
 	                return;
 	            }
+
+	            // Disable send button while processing
+	            if (sendBtn) sendBtn.disabled = true;
 
 	            // Add user message to UI immediately
 	            state.chat.push({ role: 'user', text: msg });
@@ -29844,6 +30218,9 @@ ${'='.repeat(80)}
 	            } catch (err) {
 	                state.isWaiting = false;
 	                showPlanError('🐟 Something went wrong: ' + err.message);
+	            } finally {
+	                // Re-enable send button
+	                if (sendBtn) sendBtn.disabled = false;
 	            }
 	        }
 
@@ -29853,8 +30230,14 @@ ${'='.repeat(80)}
 
 	            try {
 	                const resp = await fetch(`/api/session_state?session_id=${encodeURIComponent(state.session_id)}`);
+	                if (!resp.ok) {
+	                    throw new Error(`Server error: ${resp.status}`);
+	                }
 	                const data = await resp.json();
 	                const assistantMsgs = (data.parsed && data.parsed.messages) ? data.parsed.messages : [];
+
+	                // Reset fail count on success
+	                state.pollFailCount = 0;
 
 	                let hasNewMessages = false;
 	                if (assistantMsgs.length > state.lastAssistantCount) {
@@ -29893,6 +30276,16 @@ ${'='.repeat(80)}
 	                }
 	            } catch (err) {
 	                console.warn('Plan poll failed:', err);
+	                state.pollFailCount = (state.pollFailCount || 0) + 1;
+	                if (state.pollFailCount >= 3) {
+	                    state.isWaiting = false;
+	                    showPlanError('Connection lost. Please try sending your message again.');
+	                    if (planPollTimer) {
+	                        clearInterval(planPollTimer);
+	                        planPollTimer = null;
+	                    }
+	                    renderPlanChat();
+	                }
 	            }
 	        }
 
@@ -29936,6 +30329,7 @@ ${'='.repeat(80)}
 
 	        function renderPlanChat() {
 	            const chatEl = document.getElementById('plan-chat');
+	            const planPanel = document.getElementById('plan-panel');
 	            const state = _getActivePlanState();
 	            if (!chatEl) return;
 	            chatEl.innerHTML = '';
@@ -29949,26 +30343,193 @@ ${'='.repeat(80)}
 	                    <p>I'll help you design an effective prompt. Tell me what you want to achieve.</p>
 	                `;
 	                chatEl.appendChild(welcome);
+	                planPanel?.classList.remove('has-final-plan');
 	                return;
 	            }
 
+	            let hasFinalPlan = false;
+	            let finalPlanText = '';
+
+	            // Helper to create message with avatar
+	            function createMessageWithAvatar(role, contentHtml) {
+	                const wrapper = document.createElement('div');
+	                wrapper.className = `plan-msg-wrapper ${role}`;
+
+	                const avatar = document.createElement('div');
+	                avatar.className = `plan-msg-avatar ${role}`;
+	                avatar.textContent = role === 'user' ? 'You' : 'AI';
+
+	                const bubble = document.createElement('div');
+	                bubble.className = `plan-msg ${role}`;
+	                bubble.innerHTML = contentHtml;
+
+	                // Apply syntax highlighting to code blocks
+	                bubble.querySelectorAll('pre code').forEach(block => {
+	                    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+	                });
+
+	                wrapper.appendChild(avatar);
+	                wrapper.appendChild(bubble);
+	                return wrapper;
+	            }
+
 	            // Render messages
-	            state.chat.forEach(m => {
-	                const div = document.createElement('div');
-	                div.className = `plan-msg ${m.role === 'user' ? 'user' : 'assistant'}`;
-	                div.textContent = m.text;
-	                chatEl.appendChild(div);
+	            state.chat.forEach((m, idx) => {
+	                const role = m.role === 'user' ? 'user' : 'assistant';
+
+	                // Check if this is an assistant message with PLAN_STATUS: FINAL
+	                if (m.role === 'assistant' && m.text.includes('PLAN_STATUS: FINAL')) {
+	                    // Extract plan text (everything after PLAN_STATUS: FINAL line)
+	                    const statusIdx = m.text.indexOf('PLAN_STATUS: FINAL');
+	                    const beforeStatus = m.text.slice(0, statusIdx).trim();
+	                    const afterStatus = m.text.slice(statusIdx + 'PLAN_STATUS: FINAL'.length).trim();
+
+	                    // Show the message before the status marker
+	                    if (beforeStatus) {
+	                        const parsedHtml = typeof marked !== 'undefined' ? marked.parse(beforeStatus) : escapeHtml(beforeStatus);
+	                        chatEl.appendChild(createMessageWithAvatar(role, parsedHtml));
+	                    }
+
+	                    // If this is the last message, render the inline card
+	                    if (idx === state.chat.length - 1) {
+	                        hasFinalPlan = true;
+	                        finalPlanText = afterStatus || state.latest_plan_text || '';
+	                        const card = createPlanCard(finalPlanText);
+	                        chatEl.appendChild(card);
+	                    } else {
+	                        // Not the last message, just show the text
+	                        const parsedHtml = typeof marked !== 'undefined' ? marked.parse(m.text) : escapeHtml(m.text);
+	                        chatEl.appendChild(createMessageWithAvatar(role, parsedHtml));
+	                    }
+	                } else {
+	                    const parsedHtml = typeof marked !== 'undefined' ? marked.parse(m.text) : escapeHtml(m.text);
+	                    chatEl.appendChild(createMessageWithAvatar(role, parsedHtml));
+	                }
 	            });
+
+	            // Toggle has-final-plan class to hide footer Apply button
+	            if (hasFinalPlan) {
+	                planPanel?.classList.add('has-final-plan');
+	            } else {
+	                planPanel?.classList.remove('has-final-plan');
+	            }
 
 	            // Show typing indicator if waiting
 	            if (state.isWaiting) {
+	                const wrapper = document.createElement('div');
+	                wrapper.className = 'plan-msg-wrapper assistant';
+
+	                const avatar = document.createElement('div');
+	                avatar.className = 'plan-msg-avatar assistant';
+	                avatar.textContent = 'AI';
+
 	                const typing = document.createElement('div');
 	                typing.className = 'plan-msg assistant typing';
-	                chatEl.appendChild(typing);
+	                typing.innerHTML = '<span class="thinking-label">Drafting response...</span><span class="thinking-dots">●●●</span>';
+
+	                wrapper.appendChild(avatar);
+	                wrapper.appendChild(typing);
+	                chatEl.appendChild(wrapper);
 	            }
 
 	            // Auto-scroll
 	            chatEl.scrollTop = chatEl.scrollHeight;
+	        }
+
+	        // Create inline Plan Card element
+	        function createPlanCard(planText) {
+	            const card = document.createElement('div');
+	            card.className = 'plan-card';
+	            const kindLabel = activePlanKind === 'eval' ? 'Evaluator Prompt' : 'Evolution Prompt';
+	            card.innerHTML = `
+	                <div class="plan-card-header">
+	                    <svg class="plan-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                        <path d="M9 12l2 2 4-4"/>
+	                        <circle cx="12" cy="12" r="10"/>
+	                    </svg>
+	                    <span class="plan-card-title">Your ${kindLabel} is Ready</span>
+	                </div>
+	                <div class="plan-card-body">
+	                    <div class="plan-card-preview">${escapeHtml(planText) || '(No plan text extracted)'}</div>
+	                </div>
+	                <div class="plan-card-actions">
+	                    <button class="plan-accept-btn" onclick="acceptPlanInline()">Accept</button>
+	                    <button class="plan-reject-btn" onclick="rejectPlanInline()">Reject</button>
+	                    <button class="plan-refine-btn" onclick="refinePlanInline()">Ask to Refine</button>
+	                </div>
+	            `;
+	            return card;
+	        }
+
+	        // Helper to escape HTML
+	        function escapeHtml(text) {
+	            if (!text) return '';
+	            const div = document.createElement('div');
+	            div.textContent = text;
+	            return div.innerHTML;
+	        }
+
+	        // Accept the plan and apply to textarea
+	        function acceptPlanInline() {
+	            const state = _getActivePlanState();
+	            if (!state.latest_plan_text && !state.status) {
+	                showToast('No plan available to apply', 'error');
+	                return;
+	            }
+
+	            // Get plan text from state or extract from last message
+	            let planText = state.latest_plan_text;
+	            if (!planText && state.chat.length > 0) {
+	                const lastMsg = state.chat[state.chat.length - 1];
+	                if (lastMsg.role === 'assistant' && lastMsg.text.includes('PLAN_STATUS: FINAL')) {
+	                    const statusIdx = lastMsg.text.indexOf('PLAN_STATUS: FINAL');
+	                    planText = lastMsg.text.slice(statusIdx + 'PLAN_STATUS: FINAL'.length).trim();
+	                }
+	            }
+
+	            if (!planText) {
+	                showToast('Could not extract plan text', 'error');
+	                return;
+	            }
+
+	            // Apply to the appropriate textarea
+	            if (activePlanKind === 'eval') {
+	                document.getElementById('eval-prompt').value = planText;
+	            } else {
+	                document.getElementById('task-sys-msg').value = planText;
+	            }
+
+	            showToast('Plan applied successfully!', 'success');
+	            closePlanPanel();
+	        }
+
+	        // Reject the plan and resume conversation
+	        function rejectPlanInline() {
+	            const state = _getActivePlanState();
+	            // Clear the FINAL status so we can continue
+	            state.status = '';
+	            state.latest_plan_text = '';
+
+	            // Remove has-final-plan class
+	            document.getElementById('plan-panel')?.classList.remove('has-final-plan');
+
+	            // Add a message indicating rejection and send it
+	            const input = document.getElementById('plan-user-input');
+	            if (input) {
+	                input.value = "I'd like to make some changes to this plan.";
+	                sendPlanMessage();
+	            }
+	        }
+
+	        // Focus input for refinement
+	        function refinePlanInline() {
+	            const input = document.getElementById('plan-user-input');
+	            if (input) {
+	                input.value = 'Can you modify the plan to ';
+	                input.focus();
+	                // Position cursor at end
+	                input.setSelectionRange(input.value.length, input.value.length);
+	            }
 	        }
 
 	        // -------------- End Plan-with-AI Slide-out Panel --------------
@@ -30006,6 +30567,12 @@ ${'='.repeat(80)}
                         e.preventDefault();
                         sendPlanMessage();
                     }
+                });
+
+                // Auto-resize textarea as user types
+                planInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
                 });
             }
 

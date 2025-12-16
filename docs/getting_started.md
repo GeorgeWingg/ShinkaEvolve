@@ -85,13 +85,42 @@ pip install -e .
 
 ### Step 3: Set Up Credentials
 
-Create a `.env` file in the project root with your API keys:
+#### Option A: WebUI Credentials Dialog (Recommended)
+
+The easiest way to configure API keys is through the WebUI:
+
+1. Start the visualization server:
+   ```bash
+   uv run shinka_visualize results --port 8888 --open
+   ```
+
+2. Click the **gear icon** in the top-right corner to open the API Credentials dialog
+
+3. Add your API keys for the providers you want to use (OpenAI, Anthropic, Google, etc.)
+
+**Security features:**
+- Keys are encrypted using Fernet symmetric encryption with a machine-specific key
+- On supported systems, the encryption key is stored in your OS keyring (macOS Keychain, Windows Credential Manager, or Linux Secret Service)
+- Credentials are stored locally in `~/.shinka/credentials.json`
+- Keys never leave your machine
+
+**Custom providers:** You can also add custom OpenAI-compatible endpoints (like LMStudio, Ollama, or Together AI) with optional logo uploads for easy identification.
+
+#### Option B: Environment Variables
+
+Alternatively, create a `.env` file in the project root:
 
 ```bash
 # .env file
 OPENAI_API_KEY=sk-proj-your-key-here
 ANTHROPIC_API_KEY=your-anthropic-key-here  # Optional
+GOOGLE_API_KEY=your-google-key-here        # Optional
 ```
+
+**Credential priority:** Shinka checks for credentials in this order:
+1. Encrypted credential store (WebUI-configured keys)
+2. Environment variables (`.env` file or shell exports)
+3. Legacy CLI config files (for backward compatibility)
 
 ### Step 4: Verify Installation
 

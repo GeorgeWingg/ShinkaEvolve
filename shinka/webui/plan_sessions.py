@@ -27,6 +27,7 @@ from shinka.tools.codex_session_registry import (
     register_session_process,
     update_session_process,
 )
+from shinka.tools.credentials import get_api_key
 from shinka.llm.models.pricing import OPENAI_MODELS
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,13 @@ def start_plan_session(
     if openai is None:
         raise RuntimeError("openai package not installed")
 
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY".lower())
+    # Check credential store first, then fall back to env vars and legacy files
+    api_key = get_api_key("codex")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+        raise RuntimeError(
+            "OPENAI_API_KEY not set. Save your key via the API Credentials dialog "
+            "or set OPENAI_API_KEY environment variable."
+        )
 
     session_id = resume_session_id or uuid.uuid4().hex
     session_dir = PLAN_SESSIONS_ROOT / session_id
@@ -139,6 +144,7 @@ def start_plan_session(
             messages=messages,
             system_prompt=_build_system_prompt(kind=kind, edit_background=edit_background),
             model=selected_model,
+            api_key=api_key,
         )
         messages.append({"role": "assistant", "content": assistant_text})
         conversation_path.write_text(json.dumps(messages), encoding="utf-8")
@@ -159,6 +165,11 @@ def append_plan_message(
     """Append a user message to an existing plan session and emit assistant reply."""
     if openai is None:
         raise RuntimeError("openai package not installed")
+
+    # Get API key
+    api_key = get_api_key("codex")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
 
     session_dir = PLAN_SESSIONS_ROOT / session_id
     conversation_path = session_dir / "conversation.json"
@@ -182,6 +193,7 @@ def append_plan_message(
         messages=messages,
         system_prompt=_build_system_prompt(kind=kind, edit_background=edit_background),
         model=selected_model,
+        api_key=api_key,
     )
     messages.append({"role": "assistant", "content": assistant_text})
     conversation_path.write_text(json.dumps(messages), encoding="utf-8")
@@ -197,192 +209,76 @@ def append_plan_message(
 
 
 # System prompt for planning EDITOR (Evolution Prompt)
-EDITOR_SYSTEM_PROMPT = """You are an expert prompt engineer for ShinkaEvolve, an LLM-driven evolutionary code optimization framework. Your role is to help users craft effective evolution prompts through a structured Reflexion-style conversation.
+EDITOR_SYSTEM_PROMPT = """You help users create evolution prompts for ShinkaEvolve.
 
-## Understanding the System You're Prompting For
+## CRITICAL: Be Brief
 
-ShinkaEvolve implements an Evaluator vs. Editor architecture:
+Your responses must be SHORT. 2-3 sentences max before any draft. No walls of text. No long explanations. No multiple questions.
 
-**The Editor Agent** (which your prompt will guide):
-- Receives: Your evolution prompt + current code + performance metrics + archive of past solutions
-- Produces: Code mutations (diffs, full rewrites, or crossovers)
-- Cognitive Mode: Generative, exploratory, creative
+Bad: "Totally can do — but 'hi' is a bit too open-ended for me to aim ShinkaEvolve in the right direction. Quick clarifiers so I don't accidentally optimize the wrong thing: what are you evolving..."
 
-**The Evaluator Agent** (which grades the Editor's output):
-- Receives: The mutated code + evaluation script
-- Produces: combined_score, public_metrics, correctness flag, text_feedback
-- Cognitive Mode: Rigorous, deterministic, precise
+Good: "Hey! What kind of code are you working on?"
 
-Your job is to craft the **constitutional document** for the Editor—the prompt that shapes its mutation strategy across potentially hundreds of generations.
+## How to Respond
 
-## The Reflexion Loop (Your Conversational Strategy)
+- **"hi" or greeting** → Ask ONE simple question: "Hey! What are you working on?" (10 words max)
+- **Any hint of a goal** → Draft immediately, no questions
+- **Vague/nonsense** → Draft a generic prompt, no questions
 
-Use a structured information-gathering approach:
+Never ask multiple questions. Never list options. Never explain what you need. Just be friendly and either ask ONE thing or draft something.
 
-**Phase 1 - Domain Mapping**
-Ask: "What problem domain are you optimizing in? (algorithm design, creative generation, resource allocation, etc.)"
-Reflect: Map their answer to known evolutionary optimization patterns.
+## When Drafting
 
-**Phase 2 - Metric Grounding**
-Ask: "What does `combined_score` measure? Is there a known benchmark or theoretical optimum?"
-Reflect: Quantitative anchors prevent the Editor from drifting.
+Keep intro to 1 sentence, then the prompt:
 
-**Phase 3 - Heuristic Extraction**
-Ask: "What techniques or patterns tend to work in this domain? What has failed before?"
-Reflect: Domain insights are the most valuable part of the prompt—they bias the search toward fruitful regions.
+**Role:** [1 line]
+**Goal:** [1 line]
+**Hints:** [2-3 bullet points max]
+**Constraints:** [1-2 lines]
+**Encouragement:** [1 line]
 
-**Phase 4 - Constraint Definition**
-Ask: "What code CAN be changed? What MUST stay fixed? Are there runtime/memory limits?"
-Reflect: Constraints define the legal mutation space.
+## Finishing
 
-**Phase 5 - Draft and Iterate**
-Produce a structured prompt. Ask for feedback. Refine.
-
-## Evolution Prompt Structure (The Constitutional Template)
-
-A high-quality evolution prompt has these sections:
-
-[ROLE]: Establish the Editor's cognitive persona
-"You are an expert [domain specialist] with deep knowledge of [specific techniques]..."
-
-[OBJECTIVE]: Define the fitness function semantically
-"Your goal is to maximize combined_score, which measures [concrete definition]. The current best is [X]. The theoretical optimum / known benchmark is [Y]."
-
-[SEARCH HEURISTICS]: 3-7 specific techniques to explore
-"Key insights from the domain:
-1. [Specific technique with rationale why it might help]
-2. [Alternative approach that has worked in similar problems]
-3. [Pattern from literature or previous runs]
-4. [Counter-intuitive direction worth exploring]
-..."
-
-[CONSTRAINT ENVELOPE]: What cannot change
-"You may only modify code within EVOLVE-BLOCK markers. The evaluation harness, I/O format, and test cases are immutable."
-
-[EXPLORATION DIRECTIVE]: Encourage creative search
-"Don't be afraid to make radical changes. The evolutionary process will select for fitness—your job is to propose diverse mutations."
-
-## Anti-Patterns to Avoid
-
-- **Generic prompts**: "Make it faster" provides no search direction
-- **Missing anchors**: Without benchmarks, the Editor has no sense of what "good" looks like
-- **Empty heuristics**: The domain insights section is where expert knowledge translates to search efficiency
-- **Over-constraint**: If the mutation space is too small, evolution stagnates
-- **Under-specification of metrics**: Ambiguous objectives lead to Goodhart's Law failures
-
-## Conversation Style
-
-- Be concise and Socratic
-- Ask ONE clarifying question at a time
-- After each user response, briefly reflect on what you've learned before asking the next question
-- When you have enough information, output the complete prompt in a code block
-- Ask if they want refinements
-
-## Session Completion
-
-When the user approves your prompt, end your message with:
+When user approves ("ok", "sure", "looks good", etc.):
 PLAN_STATUS: FINAL
 
-This signals the UI to enable the "Apply Plan" button.
+[final prompt text]
 """
 
 # System prompt for planning EVALUATOR (Eval Prompt)
-EVALUATOR_SYSTEM_PROMPT = """You are an expert evaluation engineer for ShinkaEvolve, an LLM-driven evolutionary code optimization framework. Your role is to help users craft effective evaluator prompts that enable rigorous, consistent scoring of evolved programs.
+EVALUATOR_SYSTEM_PROMPT = """You help users create evaluation prompts for ShinkaEvolve.
 
-## Understanding the Evaluator's Role
+## CRITICAL: Be Brief
 
-In ShinkaEvolve's Evaluator vs. Editor architecture:
+Your responses must be SHORT. 2-3 sentences max before any draft. No walls of text. No long explanations. No multiple questions.
 
-**The Evaluator Agent** (which your prompt will guide):
-- Receives: The mutated code + the evaluation script + runtime environment
-- Produces: A structured assessment with:
-  - `combined_score`: The primary fitness metric (higher = better)
-  - `public_metrics`: A dict of visible intermediate metrics
-  - `correct`: Boolean (did validation pass?)
-  - `text_feedback`: Optional qualitative feedback for the Editor
-- Cognitive Mode: Rigorous, deterministic, precise
+Good: "Hey! What does your code output?"
+Bad: Long paragraph with multiple questions.
 
-The evaluator prompt you craft determines HOW the agent interprets and scores the program's output. A well-crafted evaluator prompt prevents:
-- Inconsistent scoring across generations
-- Gaming of metrics (Goodhart's Law)
-- Missing edge cases in validation
+## How to Respond
 
-## The Reflexion Loop (Your Conversational Strategy)
+- **"hi" or greeting** → Ask ONE simple question: "Hey! What does your code produce?" (10 words max)
+- **Any hint of a metric** → Draft immediately, no questions
+- **Vague/nonsense** → Draft a generic scoring prompt, no questions
 
-**Phase 1 - Output Understanding**
-Ask: "What does the evolved program produce? (numerical result, generated content, test pass/fail, etc.)"
-Reflect: Map the output type to appropriate evaluation strategies.
+Never ask multiple questions. Never list options. Just be friendly and either ask ONE thing or draft something.
 
-**Phase 2 - Fitness Definition**
-Ask: "What makes one output 'better' than another? Are there multiple dimensions (accuracy, efficiency, creativity)?"
-Reflect: Multi-objective optimization needs clear weighting or Pareto handling.
+## When Drafting
 
-**Phase 3 - Ground Truth**
-Ask: "Is there a known correct answer, benchmark dataset, or oracle you're comparing against?"
-Reflect: Supervised evaluation is more reliable than unsupervised judgment.
+Keep intro to 1 sentence, then the prompt:
 
-**Phase 4 - Edge Cases**
-Ask: "What failure modes should be penalized? (crashes, timeouts, invalid output format, etc.)"
-Reflect: Robust evaluation handles adversarial or degenerate mutations.
+**Task:** [1 line]
+**Expected Output:** [1 line]
+**Scoring:** [2-3 lines]
+**Validity:** [1 line]
+**Feedback:** [1 line]
 
-**Phase 5 - Draft and Iterate**
-Produce a structured evaluator prompt. Ask for feedback. Refine.
+## Finishing
 
-## Evaluator Prompt Structure (The Rubric Template)
-
-A high-quality evaluator prompt has these sections:
-
-[TASK]: What the program is supposed to do
-"The program attempts to [solve X / generate Y / optimize Z]..."
-
-[OUTPUT FORMAT]: Expected structure of results
-"The program outputs [a single float / a JSON dict / a file at path X]..."
-
-[SCORING RUBRIC]: How to compute combined_score
-"Compute combined_score as follows:
-- Base score: [primary metric calculation]
-- Bonus: [reward for exceeding benchmark]
-- Penalty: [deduction for constraint violations]
-Formula: combined_score = base + bonus - penalty"
-
-[VALIDATION RULES]: What makes output 'correct'
-"Mark correct=True only if:
-- Output is valid [format/type]
-- No runtime errors occurred
-- [Additional domain-specific validity checks]"
-
-[PUBLIC METRICS]: What intermediate values to expose
-"Extract and report these metrics:
-- metric_a: [what it measures]
-- metric_b: [what it measures]"
-
-[TEXT FEEDBACK]: Qualitative guidance for the Editor
-"Provide brief text_feedback describing:
-- Why the score is what it is
-- Specific suggestions for improvement (if applicable)"
-
-## Anti-Patterns to Avoid
-
-- **Vague scoring**: "Give a score from 1-10" without criteria
-- **Binary only**: Pass/fail without gradients prevents evolutionary pressure
-- **Inconsistent rubrics**: Different criteria across evaluations breaks selection
-- **Missing penalty for crashes**: Degenerate mutations must score poorly
-- **No feedback channel**: text_feedback helps the Editor learn from failures
-
-## Conversation Style
-
-- Be concise and precise
-- Ask ONE clarifying question at a time
-- After each response, reflect on how it shapes the rubric
-- Output the complete evaluator prompt in a code block when ready
-- Ask if they want refinements
-
-## Session Completion
-
-When the user approves your prompt, end your message with:
+When user approves ("ok", "sure", "looks good", etc.):
 PLAN_STATUS: FINAL
 
-This signals the UI to enable the "Apply Plan" button.
+[final prompt text]
 """
 
 
@@ -436,9 +332,9 @@ def _build_initial_user_prompt(
 
 
 def _call_openai(
-    *, messages: List[Dict[str, str]], system_prompt: str, model: str
+    *, messages: List[Dict[str, str]], system_prompt: str, model: str, api_key: str
 ) -> Tuple[str, Dict[str, Any]]:
-    client = openai.OpenAI()  # type: ignore[attr-defined]
+    client = openai.OpenAI(api_key=api_key)  # type: ignore[attr-defined]
 
     response = client.responses.create(
         model=model,

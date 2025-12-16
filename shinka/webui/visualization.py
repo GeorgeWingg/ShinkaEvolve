@@ -313,6 +313,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/folder_picker_native":
             return self.handle_folder_picker_native(query)
 
+        if path == "/api/image_picker_native":
+            return self.handle_image_picker_native(query)
+
         if path == "/api/local_probe":
             return self.handle_local_probe(query)
 
@@ -396,6 +399,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/bandit_history/clear":
             return self.handle_bandit_history_clear()
+
+        if path == "/api/codex_device_auth":
+            return self.handle_codex_device_auth()
 
         # Plan-with-AI endpoints (New Run modal)
         if path == "/api/plan_session/start":
@@ -1217,8 +1223,25 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 
             # If the key is masked (from the frontend cache), try to load the real key
             # This allows testing a key that was just saved or previously configured
-            if not api_key or "···" in api_key or "•••" in api_key:
-                stored_key = get_api_key(provider)
+            # Check for various mask patterns: dots, bullets, or very short keys
+            is_masked = (
+                not api_key or
+                "···" in api_key or
+                "•" in api_key or  # Catch any bullet characters
+                (len(api_key) < 20 and api_key.startswith("sk-") is False)  # Too short to be real
+            )
+            if is_masked:
+                # Map frontend provider name to backend name for credential lookup
+                FRONTEND_TO_BACKEND = {
+                    "openai": "codex",
+                    "anthropic": "claude",
+                    "google": "gemini",
+                    "deepseek": "deepseek",
+                    "openrouter": "openrouter",
+                    "azure": "azure",
+                }
+                backend_provider = FRONTEND_TO_BACKEND.get(provider, provider)
+                stored_key = get_api_key(backend_provider)
                 if stored_key:
                     api_key = stored_key
                 else:
@@ -1237,6 +1260,98 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[SERVER] Error testing credentials: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_codex_device_auth(self):
+        """Start Codex device auth and return the device code.
+
+        The frontend opens the browser immediately to the auth URL.
+        This endpoint runs the CLI to get the device code and returns it.
+        """
+        import shutil
+        import select
+        from shinka.tools.codex_device_auth import (
+            _parse_device_auth_output,
+            CODEX_DEVICE_AUTH_URL,
+        )
+
+        print("[SERVER] Starting Codex device auth flow")
+
+        try:
+            # Find Codex CLI
+            codex_bin = shutil.which("codex")
+            if not codex_bin:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Codex CLI not found. Install with: npm install -g @openai/codex",
+                    "url": CODEX_DEVICE_AUTH_URL,
+                })
+                return
+
+            # Run device auth and capture output to get the code
+            proc = subprocess.Popen(
+                [codex_bin, "login", "--device-auth"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            # Read output with timeout until we get the device code
+            output_lines = []
+            device_code = None
+            timeout_seconds = 10  # Wait max 10s for code to appear
+
+            import time
+            start_time = time.time()
+
+            while time.time() - start_time < timeout_seconds:
+                # Use select to check if there's data to read (with 0.5s timeout)
+                import sys
+                if sys.platform != 'win32':
+                    ready, _, _ = select.select([proc.stdout], [], [], 0.5)
+                    if not ready:
+                        continue
+
+                line = proc.stdout.readline()
+                if not line:
+                    break  # EOF
+
+                output_lines.append(line)
+                print(f"[SERVER] Codex output: {line.strip()}")
+
+                _, code = _parse_device_auth_output(''.join(output_lines))
+                if code:
+                    device_code = code
+                    break
+
+            if device_code:
+                print(f"[SERVER] Got device code: {device_code}")
+                self.send_json_response({
+                    "ok": True,
+                    "url": CODEX_DEVICE_AUTH_URL,
+                    "code": device_code,
+                })
+                # The CLI continues running in background - user completes auth in browser
+            else:
+                # Timeout or process exited without giving us a code
+                full_output = ''.join(output_lines)
+                print(f"[SERVER] No device code found. Output: {full_output[:200]}")
+                proc.kill()
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Could not get device code. Enable device-auth in ChatGPT Security Settings (chatgpt.com/settings/security).",
+                    "url": CODEX_DEVICE_AUTH_URL,
+                    "output": full_output[:500],
+                })
+
+        except Exception as e:
+            print(f"[SERVER] Error in device auth: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "ok": False,
+                "error": str(e),
+                "url": CODEX_DEVICE_AUTH_URL,
+            })
 
     def handle_custom_providers_get(self):
         """Return list of custom provider configurations."""
@@ -1275,6 +1390,10 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "models": data.get("models", []),
                 "placeholder": data.get("placeholder", "Enter API key..."),
             }
+
+            # Add logo if provided (data URL)
+            if data.get("logo"):
+                config["logo"] = data.get("logo")
 
             save_custom_provider(provider_id, config)
             print(f"[SERVER] Saved custom provider: {provider_id}")
@@ -1684,6 +1803,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if not session_id:
             return self.send_json_response({"error": "No session_id provided"})
 
+        # Support incremental fetching: only return events from since_idx onwards
+        try:
+            since_idx = int(query.get("since_idx", ["0"])[0])
+        except (ValueError, TypeError):
+            since_idx = 0
+
         try:
             # Get active sessions from registry
             registry_sessions = list_session_processes()
@@ -1744,7 +1869,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if "started_at" not in meta and "start_time" in meta:
                     meta["started_at"] = meta.get("start_time")
 
-                events = []
+                all_events = []
                 if os.path.exists(log_path):
                     with open(log_path, "r") as f:
                         for line in f:
@@ -1752,14 +1877,32 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                             if not line:
                                 continue
                             try:
-                                events.append(json.loads(line))
+                                all_events.append(json.loads(line))
                             except json.JSONDecodeError:
                                 pass
 
-                parsed = self._parse_session_events(events)
+                # Incremental fetch: only return events from since_idx onwards
+                total_count = len(all_events)
+                new_events = all_events[since_idx:] if since_idx < total_count else []
+
+                # Find latest event timestamp for clock sync
+                latest_event_timestamp = None
+                for event in reversed(all_events):
+                    if "timestamp" in event:
+                        latest_event_timestamp = event["timestamp"]
+                        break
+                    item = event.get("item", {})
+                    if isinstance(item, dict) and "timestamp" in item:
+                        latest_event_timestamp = item["timestamp"]
+                        break
+
+                parsed = self._parse_session_events(new_events) if new_events else {}
                 return self.send_json_response({
                     "meta": meta,
-                    "events": events,
+                    "events": new_events,
+                    "total_count": total_count,
+                    "since_idx": since_idx,
+                    "latest_event_timestamp": latest_event_timestamp,
                     "parsed": parsed,
                     "status": "running",
                 })
@@ -1783,23 +1926,41 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             })
             
             # Read session events from log
-            events = []
+            all_events = []
             if os.path.exists(log_path):
                 with open(log_path, 'r') as f:
                     for line in f:
                         line = line.strip()
                         if line:
                             try:
-                                events.append(json.loads(line))
+                                all_events.append(json.loads(line))
                             except json.JSONDecodeError:
                                 pass
-            
+
+            # Incremental fetch: only return events from since_idx onwards
+            total_count = len(all_events)
+            new_events = all_events[since_idx:] if since_idx < total_count else []
+
+            # Find latest event timestamp for clock sync
+            latest_event_timestamp = None
+            for event in reversed(all_events):
+                if "timestamp" in event:
+                    latest_event_timestamp = event["timestamp"]
+                    break
+                item = event.get("item", {})
+                if isinstance(item, dict) and "timestamp" in item:
+                    latest_event_timestamp = item["timestamp"]
+                    break
+
             # Parse events into structured data for UI tabs
-            parsed = self._parse_session_events(events)
-            
+            parsed = self._parse_session_events(new_events) if new_events else {}
+
             self.send_json_response({
                 "meta": meta,
-                "events": events,
+                "events": new_events,
+                "total_count": total_count,
+                "since_idx": since_idx,
+                "latest_event_timestamp": latest_event_timestamp,
                 "parsed": parsed,
                 "status": "running",
             })
@@ -3230,6 +3391,157 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[SERVER] Error in native folder picker: {e}")
             self.send_json_response({"ok": False, "error": str(e), "fallback": True})
+
+    def handle_image_picker_native(self, query: Dict[str, Any]):
+        """Open native OS file picker for image selection and return base64 data URL."""
+        import subprocess
+        import platform
+        import base64
+        import mimetypes
+        from pathlib import Path
+
+        initial_dir_list = query.get("initial_dir", [""])
+        initial_dir = initial_dir_list[0] if initial_dir_list else ""
+        if not initial_dir:
+            initial_dir = str(Path.home() / "Pictures")
+        if not Path(initial_dir).exists():
+            initial_dir = str(Path.home())
+
+        system = platform.system()
+
+        try:
+            if system == "Darwin":  # macOS
+                script = f'''
+                    set defaultPath to POSIX file "{initial_dir}"
+                    try
+                        set selectedFile to choose file with prompt "Select Logo Image" of type {{"png", "jpg", "jpeg", "svg", "gif", "webp"}} default location defaultPath
+                        return POSIX path of selectedFile
+                    on error
+                        return ""
+                    end try
+                '''
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                file_path = result.stdout.strip()
+
+            elif system == "Windows":
+                ps_script = '''
+                Add-Type -AssemblyName System.Windows.Forms
+                $dialog = New-Object System.Windows.Forms.OpenFileDialog
+                $dialog.Title = "Select Logo Image"
+                $dialog.Filter = "Image files (*.png;*.jpg;*.jpeg;*.svg;*.gif;*.webp)|*.png;*.jpg;*.jpeg;*.svg;*.gif;*.webp|All files (*.*)|*.*"
+                $dialog.InitialDirectory = "%s"
+                if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                    Write-Output $dialog.FileName
+                }
+                ''' % initial_dir
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                file_path = result.stdout.strip()
+
+            elif system == "Linux":
+                file_path = None
+                # Try zenity
+                try:
+                    result = subprocess.run(
+                        ["zenity", "--file-selection",
+                         "--title=Select Logo Image",
+                         "--file-filter=Images | *.png *.jpg *.jpeg *.svg *.gif *.webp",
+                         f"--filename={initial_dir}/"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        file_path = result.stdout.strip()
+                except FileNotFoundError:
+                    pass
+
+                # Try kdialog
+                if file_path is None:
+                    try:
+                        result = subprocess.run(
+                            ["kdialog", "--getopenfilename", initial_dir,
+                             "*.png *.jpg *.jpeg *.svg *.gif *.webp|Image Files",
+                             "--title", "Select Logo Image"],
+                            capture_output=True,
+                            text=True,
+                            timeout=120
+                        )
+                        if result.returncode == 0:
+                            file_path = result.stdout.strip()
+                    except FileNotFoundError:
+                        pass
+
+                if file_path is None:
+                    self.send_json_response({
+                        "ok": False,
+                        "error": "No native dialog available (install zenity or kdialog)"
+                    })
+                    return
+            else:
+                self.send_json_response({
+                    "ok": False,
+                    "error": f"Unsupported platform: {system}"
+                })
+                return
+
+            if not file_path:
+                # User cancelled
+                self.send_json_response({"ok": True, "path": None, "data_url": None})
+                return
+
+            # Read file and convert to base64 data URL
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                self.send_json_response({"ok": False, "error": "File not found"})
+                return
+
+            # Check file size (limit to 2MB)
+            if file_path_obj.stat().st_size > 2 * 1024 * 1024:
+                self.send_json_response({"ok": False, "error": "File too large (max 2MB)"})
+                return
+
+            # Determine mime type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                ext = file_path_obj.suffix.lower()
+                mime_map = {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".gif": "image/gif",
+                    ".svg": "image/svg+xml",
+                    ".webp": "image/webp",
+                }
+                mime_type = mime_map.get(ext, "application/octet-stream")
+
+            # Read and encode
+            with open(file_path, "rb") as f:
+                file_data = f.read()
+            base64_data = base64.b64encode(file_data).decode("utf-8")
+            data_url = f"data:{mime_type};base64,{base64_data}"
+
+            self.send_json_response({
+                "ok": True,
+                "path": file_path,
+                "data_url": data_url,
+                "filename": file_path_obj.name
+            })
+
+        except subprocess.TimeoutExpired:
+            self.send_json_response({"ok": False, "error": "Dialog timed out"})
+        except Exception as e:
+            print(f"[SERVER] Error in native image picker: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
 
     def handle_local_probe(self, query: Dict[str, Any]):
         """Probe a local path to determine git status for isolation UI.
