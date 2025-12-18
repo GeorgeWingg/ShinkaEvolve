@@ -74,8 +74,11 @@ def get_readonly_connection(db_path: str) -> sqlite3.Connection:
 
 
 DEFAULT_PORT = 8000
-CACHE_EXPIRATION_SECONDS = 5  # Cache data for 5 seconds
-db_cache: Dict[str, Tuple[float, Any]] = {}
+CACHE_EXPIRATION_SECONDS = 30  # Cache data for 30 seconds (reduced from 5s)
+MAX_CACHE_ENTRIES = 50  # Limit cache size to prevent memory leaks
+db_cache: Dict[str, Tuple[float, float, Any]] = {}  # (timestamp, mtime, data)
+active_jobs_cache: Dict[str, Tuple[float, Any]] = {}  # (timestamp, data)
+ACTIVE_JOBS_CACHE_SECONDS = 10  # Cache active jobs for 10 seconds
 
 # Large metadata fields to exclude from initial /get_programs response
 # These can contain MB of data (session transcripts, command outputs, etc.)
@@ -235,6 +238,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             db_path = query["db_path"][0]
             program_id = query["program_id"][0]
             return self.handle_get_program_details(db_path, program_id)
+
+        if path == "/get_agent_session_log" and "db_path" in query and "program_id" in query:
+            return self.handle_get_agent_session_log(query)
 
         if path == "/get_meta_files" and "db_path" in query:
             db_path = query["db_path"][0]
@@ -430,6 +436,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 elif len(parts) == 5 and parts[4] == "mcp":
                     # POST /api/cli_config/{provider}/mcp (add MCP server)
                     return self.handle_cli_config_mcp_add(provider)
+                elif len(parts) == 6 and parts[4] == "mcp" and parts[5] == "validate":
+                    # POST /api/cli_config/{provider}/mcp/validate
+                    return self.handle_cli_config_mcp_validate(provider)
                 elif len(parts) == 6 and parts[4] == "mcp":
                     # POST /api/cli_config/{provider}/mcp/{name} (delete MCP server)
                     mcp_name = parts[5]
@@ -1703,13 +1712,20 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_active_jobs(self, query: Dict[str, Any]):
         """Return list of currently active/in-progress evolution jobs.
-        
+
         Uses the session registry with PID-based verification for 100% accuracy.
         A job is active if and only if its CLI process is still running.
         """
         db_path = query.get("db_path", [""])[0]
         if not db_path:
             return self.send_json_response({"jobs": []})
+
+        # Check cache first (10 second TTL to reduce filesystem scans)
+        cache_key = db_path
+        if cache_key in active_jobs_cache:
+            cached_time, cached_result = active_jobs_cache[cache_key]
+            if time.time() - cached_time < ACTIVE_JOBS_CACHE_SECONDS:
+                return self.send_json_response(cached_result)
 
         try:
             # Resolve the db_path to get the run directory (handles external workspaces)
@@ -1785,8 +1801,11 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             if active_jobs:
                 print(f"[SERVER] Found {len(active_jobs)} active jobs (PID-verified)")
-            
-            self.send_json_response({"jobs": active_jobs})
+
+            # Cache the result before sending
+            result = {"jobs": active_jobs}
+            active_jobs_cache[cache_key] = (time.time(), result)
+            self.send_json_response(result)
         except Exception as e:
             print(f"[SERVER] Error getting active jobs: {e}")
             import traceback
@@ -1897,6 +1916,10 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         break
 
                 parsed = self._parse_session_events(new_events) if new_events else {}
+
+                # Detect session status from meta or events (Bug #2 fix)
+                detected_status = self._detect_session_status(meta, all_events)
+
                 return self.send_json_response({
                     "meta": meta,
                     "events": new_events,
@@ -1904,7 +1927,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "since_idx": since_idx,
                     "latest_event_timestamp": latest_event_timestamp,
                     "parsed": parsed,
-                    "status": "running",
+                    "status": detected_status,
                 })
             
             workdir = session_info.get("workdir", "")
@@ -1955,6 +1978,12 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Parse events into structured data for UI tabs
             parsed = self._parse_session_events(new_events) if new_events else {}
 
+            # Use status from registry/meta, with fallback detection (Bug #2 fix)
+            registry_status = session_info.get("status", "")
+            detected_status = self._detect_session_status(meta, all_events)
+            # Prefer registry status if "completed", else use detected status
+            final_status = registry_status if registry_status == "completed" else detected_status
+
             self.send_json_response({
                 "meta": meta,
                 "events": new_events,
@@ -1962,13 +1991,55 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "since_idx": since_idx,
                 "latest_event_timestamp": latest_event_timestamp,
                 "parsed": parsed,
-                "status": "running",
+                "status": final_status,
             })
             
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": str(e), "status": "error"})
+
+    def _detect_session_status(self, meta: dict, events: list) -> str:
+        """Detect session completion status from metadata and events.
+
+        This fixes Bug #2 where status was always hardcoded as "running".
+
+        Detection priority:
+        1. meta["status"] == "completed" -> completed
+        2. Last event type is completion indicator -> completed
+        3. Otherwise -> running
+
+        Args:
+            meta: Session metadata dict (from session_meta.json).
+            events: List of session events (from session_log.jsonl).
+
+        Returns:
+            "completed" or "running"
+        """
+        # 1. Check metadata status
+        if meta.get("status") == "completed":
+            return "completed"
+
+        # 2. Check last event for completion indicators
+        completion_types = {
+            "result", "error", "completed", "done", "finish", "end",
+            "session_end", "task_complete", "task_completed",
+        }
+        if events:
+            for event in reversed(events[-10:]):  # Check last 10 events
+                event_type = event.get("type", "")
+                if event_type.lower() in completion_types:
+                    return "completed"
+
+                # Also check item.type for nested events
+                item = event.get("item", {})
+                if isinstance(item, dict):
+                    item_type = item.get("type", "")
+                    if item_type.lower() in completion_types:
+                        return "completed"
+
+        # 3. Default to running
+        return "running"
 
     def _parse_session_events(self, events: list) -> dict:
         """Parse session events into structured data for UI display.
@@ -2466,16 +2537,24 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         """Fetch all programs from a given database file."""
         print(f"[SERVER] Fetching programs from DB: {db_path}")
 
-        # Check cache first
+        # Resolve the db_path to an absolute path (handles both local and external workspaces)
+        abs_db_path = self._resolve_db_path(db_path)
+
+        # Check cache with mtime validation
         if db_path in db_cache:
-            last_fetch_time, cached_data = db_cache[db_path]
-            if time.time() - last_fetch_time < CACHE_EXPIRATION_SECONDS:
+            last_fetch_time, last_mtime, cached_data = db_cache[db_path]
+            try:
+                current_mtime = os.path.getmtime(abs_db_path)
+            except OSError:
+                current_mtime = 0
+            cache_valid = (
+                time.time() - last_fetch_time < CACHE_EXPIRATION_SECONDS
+                and current_mtime == last_mtime
+            )
+            if cache_valid:
                 print(f"[SERVER] Serving from cache for DB: {db_path}")
                 self.send_json_response(cached_data)
                 return
-
-        # Resolve the db_path to an absolute path (handles both local and external workspaces)
-        abs_db_path = self._resolve_db_path(db_path)
         print(f"[SERVER] Absolute DB path: {abs_db_path} (from {db_path})")
 
         if not os.path.exists(abs_db_path):
@@ -2510,8 +2589,16 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                         p_dict["metadata"] = filter_large_metadata(p_dict["metadata"])
                     programs_dict.append(p_dict)
 
-                # Update cache (with filtered data)
-                db_cache[db_path] = (time.time(), programs_dict)
+                # Update cache (with filtered data and mtime for invalidation)
+                try:
+                    db_mtime = os.path.getmtime(abs_db_path)
+                except OSError:
+                    db_mtime = 0
+                # Enforce cache size limit
+                if len(db_cache) >= MAX_CACHE_ENTRIES:
+                    oldest_key = min(db_cache.keys(), key=lambda k: db_cache[k][0])
+                    del db_cache[oldest_key]
+                db_cache[db_path] = (time.time(), db_mtime, programs_dict)
 
                 self.send_json_response(programs_dict)
                 success_msg = (
@@ -2614,6 +2701,145 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(500, f"Database error: {str(e)}")
         except Exception as e:
             print(f"[SERVER] Error fetching program details: {e}")
+            self.send_error(500, f"Error: {str(e)}")
+        finally:
+            if db and hasattr(db, "close"):
+                try:
+                    db.close()
+                except Exception as e:
+                    print(f"[SERVER] Warning: Error closing database: {e}")
+
+    def handle_get_agent_session_log(self, query: Dict[str, List[str]]):
+        """Serve agent session logs for agentic edits and evaluators.
+
+        Query params:
+            db_path: Path to the evolution database
+            program_id: ID of the program to get logs for
+            log_type: 'agent' (default), 'agentic_evaluator', or 'ensemble_evaluator'
+            evaluator_id: Required if log_type is 'ensemble_evaluator'
+            tail_bytes: Optional, limit response to last N bytes
+        """
+        db_path = query["db_path"][0]
+        program_id = query["program_id"][0]
+        log_type = query.get("log_type", ["agent"])[0]
+        evaluator_id = query.get("evaluator_id", [None])[0]
+        tail_bytes_str = query.get("tail_bytes", [None])[0]
+        tail_bytes = int(tail_bytes_str) if tail_bytes_str else None
+
+        print(f"[SERVER] Fetching session log: program={program_id}, type={log_type}")
+
+        abs_db_path = self._resolve_db_path(db_path)
+        if not os.path.exists(abs_db_path):
+            self.send_error(404, f"Database file not found: {abs_db_path}")
+            return
+
+        # Run directory is the parent of the database file
+        run_dir = Path(abs_db_path).parent
+
+        db = None
+        try:
+            config = DatabaseConfig(db_path=abs_db_path)
+            db = ProgramDatabase(config, read_only=True)
+
+            if db.cursor:
+                db.cursor.execute("PRAGMA busy_timeout = 10000;")
+
+            # Fetch program metadata
+            db.cursor.execute(
+                "SELECT metadata FROM programs WHERE id = ?",
+                (program_id,)
+            )
+            row = db.cursor.fetchone()
+            if row is None:
+                self.send_error(404, f"Program not found: {program_id}")
+                return
+
+            metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+
+            # Determine log path based on log_type
+            log_path_str: Optional[str] = None
+
+            if log_type == "agent" or log_type == "":
+                # Default: agentic edit session log
+                log_path_str = metadata.get("agent_session_log_path")
+                if not log_path_str:
+                    # Try alternate location
+                    session_path = metadata.get("agent_session_path")
+                    if session_path:
+                        log_path_str = str(Path(session_path) / "session_log.jsonl")
+
+            elif log_type == "agentic_evaluator":
+                # Agentic evaluator log
+                agentic_eval = metadata.get("agentic_evaluator", {})
+                log_path_str = agentic_eval.get("session_log_path")
+
+            elif log_type == "ensemble_evaluator":
+                # Ensemble evaluator log - need evaluator_id
+                if not evaluator_id:
+                    self.send_error(400, "evaluator_id required for ensemble_evaluator log_type")
+                    return
+
+                ensemble_eval = metadata.get("ensemble_evaluation", {})
+                evaluators = ensemble_eval.get("evaluators", [])
+                for ev in evaluators:
+                    if ev.get("evaluator_id") == evaluator_id:
+                        log_path_str = ev.get("session_log_path")
+                        break
+
+                if not log_path_str:
+                    self.send_error(404, f"Evaluator not found: {evaluator_id}")
+                    return
+
+            else:
+                self.send_error(400, f"Unknown log_type: {log_type}")
+                return
+
+            if not log_path_str:
+                self.send_error(404, f"No session log path in metadata for {log_type}")
+                return
+
+            # Resolve path and validate it stays within run_dir (prevent path traversal)
+            log_path = (run_dir / log_path_str).resolve()
+            run_dir_resolved = run_dir.resolve()
+            try:
+                log_path.relative_to(run_dir_resolved)
+            except ValueError:
+                self.send_error(403, "Access denied: path outside run directory")
+                return
+
+            if not log_path.exists():
+                self.send_error(404, f"Session log file not found: {log_path}")
+                return
+
+            # Read file content (with optional tail)
+            try:
+                file_size = log_path.stat().st_size
+                truncated = False
+
+                if tail_bytes and file_size > tail_bytes:
+                    with open(log_path, "rb") as f:
+                        f.seek(-tail_bytes, 2)  # Seek from end
+                        content = f.read().decode("utf-8", errors="replace")
+                    truncated = True
+                else:
+                    content = log_path.read_text(encoding="utf-8", errors="replace")
+
+                self.send_json_response({
+                    "content": content,
+                    "path": str(log_path),
+                    "truncated": truncated,
+                })
+                print(f"[SERVER] Served session log: {log_path} ({len(content)} bytes)")
+
+            except Exception as e:
+                self.send_error(500, f"Error reading log file: {e}")
+                return
+
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+            print(f"[SERVER] Database error fetching session log: {e}")
+            self.send_error(500, f"Database error: {str(e)}")
+        except Exception as e:
+            print(f"[SERVER] Error fetching session log: {e}")
             self.send_error(500, f"Error: {str(e)}")
         finally:
             if db and hasattr(db, "close"):
@@ -3654,17 +3880,6 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Results directory is parent of the database
             results_dir = Path(abs_db_path).parent
 
-            # Look for evolution git repo (evolution.git in results dir)
-            evolution_repo_path = results_dir / "evolution.git"
-            if not evolution_repo_path.exists():
-                # Fall back to checking if there's a workspace with commit SHAs
-                self.send_json_response({
-                    "ok": False,
-                    "error": "No git-backed evolution storage found for this run. "
-                             "This feature requires runs with git_backed_storage=true."
-                })
-                return
-
             # Look up the program's commit SHA from the database
             con = get_readonly_connection(abs_db_path)
             cur = con.cursor()
@@ -3680,32 +3895,52 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             metadata_str, generation = row
-            commit_sha = None
+            git_commit_sha = None
+            legacy_commit_sha = None
             if metadata_str:
                 metadata = json.loads(metadata_str)
-                commit_sha = metadata.get("git_commit_sha")
+                git_commit_sha = metadata.get("git_commit_sha")  # New git-backed storage
+                legacy_commit_sha = metadata.get("commit_sha")    # Legacy workspace/.git
 
-            if not commit_sha:
-                # Try looking up via ref
-                try:
-                    manager = EvolutionGitManager(evolution_repo_path, create=False)
-                    # Check if there's a ref for this node
-                    result = subprocess.run(
-                        ["git", "rev-parse", f"refs/shinka/nodes/{program_id}"],
-                        cwd=str(evolution_repo_path),
-                        capture_output=True,
-                        text=True,
-                    )
-                    if result.returncode == 0:
-                        commit_sha = result.stdout.strip()
-                except Exception:
-                    pass
+            # Check for evolution.git first (new git-backed runs)
+            evolution_repo_path = results_dir / "evolution.git"
+            workspace_git_path = results_dir / "workspace" / ".git"
+            use_evolution_git = False
+            use_workspace_git = False
+
+            if evolution_repo_path.exists():
+                use_evolution_git = True
+                commit_sha = git_commit_sha
+                # Try looking up via ref if no SHA in metadata
+                if not commit_sha:
+                    try:
+                        result = subprocess.run(
+                            ["git", "rev-parse", f"refs/shinka/nodes/{program_id}"],
+                            cwd=str(evolution_repo_path),
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            commit_sha = result.stdout.strip()
+                    except Exception:
+                        pass
+            elif workspace_git_path.exists() and legacy_commit_sha:
+                # Fallback to workspace/.git (legacy approach)
+                use_workspace_git = True
+                commit_sha = legacy_commit_sha
+            else:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "No git storage found for this run. "
+                             "Neither evolution.git nor workspace/.git is available."
+                })
+                return
 
             if not commit_sha:
                 self.send_json_response({
                     "ok": False,
                     "error": "Program does not have a commit SHA. "
-                             "It may not be from a git-backed evolution run."
+                             "It may not have been run with git storage enabled."
                 })
                 return
 
@@ -3717,8 +3952,23 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 target_path = Path(target_path)
 
             # Create the worktree
-            manager = EvolutionGitManager(evolution_repo_path, create=False)
-            worktree_path = manager.create_user_worktree(commit_sha, target_path)
+            if use_evolution_git:
+                manager = EvolutionGitManager(evolution_repo_path, create=False)
+                worktree_path = manager.create_user_worktree(commit_sha, target_path)
+            else:
+                # Legacy workspace/.git approach - use GitWorktreeManager
+                from shinka.webui.git_worktree import GitWorktreeManager
+                git_mgr = GitWorktreeManager(
+                    base_dir=str(results_dir / "worktrees"),
+                    cache_dir=str(results_dir / ".cache"),
+                )
+                workspace_path = results_dir / "workspace"
+                worktree_info = git_mgr.create_worktree(
+                    source_path=workspace_path,
+                    target_path=target_path,
+                    ref=commit_sha,
+                )
+                worktree_path = worktree_info.path
 
             self.send_json_response({
                 "ok": True,
@@ -3930,13 +4180,24 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Results directory is parent of the database
             results_dir = Path(abs_db_path).parent
 
-            # Look for evolution git repo
+            # Look for git storage (evolution.git preferred, workspace/.git as fallback)
             evolution_repo_path = results_dir / "evolution.git"
-            if not evolution_repo_path.exists():
+            workspace_git_path = results_dir / "workspace" / ".git"
+            use_evolution_git = False
+            use_workspace_git = False
+            export_note = None
+
+            if evolution_repo_path.exists():
+                use_evolution_git = True
+            elif workspace_git_path.exists():
+                use_workspace_git = True
+                export_note = ("Exported from workspace/.git (legacy approach). "
+                               "History structure may be linear rather than tree-based.")
+            else:
                 self.send_json_response({
                     "ok": False,
-                    "error": "No git-backed evolution storage found for this run. "
-                             "This feature requires runs with git_backed_storage=true."
+                    "error": "No git storage found for this run. "
+                             "Neither evolution.git nor workspace/.git is available."
                 })
                 return
 
@@ -3950,8 +4211,14 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             export_dir = exports_dir / export_name
 
             # Export the repository
-            manager = EvolutionGitManager(evolution_repo_path, create=False)
-            exported_path = manager.export_as_repo(export_dir)
+            if use_evolution_git:
+                manager = EvolutionGitManager(evolution_repo_path, create=False)
+                exported_path = manager.export_as_repo(export_dir)
+            else:
+                # Fallback: copy workspace with .git intact
+                workspace_path = results_dir / "workspace"
+                shutil.copytree(workspace_path, export_dir)
+                exported_path = export_dir
 
             # Create archive
             if export_format == "zip":
@@ -3973,12 +4240,15 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             download_id = f"{export_name}.zip" if export_format == "zip" else export_name
             download_url = f"/download/exports/{download_id}?db_path={urllib.parse.quote(db_path)}"
 
-            self.send_json_response({
+            response = {
                 "ok": True,
                 "download_url": download_url,
                 "filename": f"{export_name}.zip",
                 "export_path": str(archive_path),
-            })
+            }
+            if export_note:
+                response["note"] = export_note
+            self.send_json_response(response)
 
         except Exception as e:
             import traceback
@@ -4200,6 +4470,90 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[SERVER] Error deleting MCP server for {provider}: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_mcp_validate(self, provider: str):
+        """Validate an MCP server command is executable."""
+        import shutil
+        import subprocess
+        try:
+            data = self._read_json_body()
+            command = data.get("command", "").strip()
+            args = data.get("args", [])
+
+            if not command:
+                self.send_json_response({
+                    "ok": False,
+                    "error": "Command is required",
+                    "valid": False
+                })
+                return
+
+            # Check if command exists in PATH
+            cmd_path = shutil.which(command)
+            if not cmd_path:
+                self.send_json_response({
+                    "ok": True,
+                    "valid": False,
+                    "error": f"Command '{command}' not found in PATH",
+                    "suggestion": f"Make sure '{command}' is installed and in your PATH"
+                })
+                return
+
+            # For npx, we can try to check if the package exists
+            if command == "npx" and args:
+                # Find the package name (skip flags like -y)
+                package_name = None
+                for arg in args:
+                    if not arg.startswith("-"):
+                        package_name = arg
+                        break
+
+                if package_name:
+                    # Try a quick check with npx --help for the package
+                    # This won't fully validate but confirms npx works
+                    try:
+                        result = subprocess.run(
+                            ["npx", "--version"],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode != 0:
+                            self.send_json_response({
+                                "ok": True,
+                                "valid": False,
+                                "error": "npx command failed",
+                                "suggestion": "Check your Node.js installation"
+                            })
+                            return
+                    except subprocess.TimeoutExpired:
+                        self.send_json_response({
+                            "ok": True,
+                            "valid": False,
+                            "error": "npx command timed out",
+                            "suggestion": "Check your Node.js installation"
+                        })
+                        return
+                    except Exception as e:
+                        self.send_json_response({
+                            "ok": True,
+                            "valid": False,
+                            "error": f"npx check failed: {e}",
+                            "suggestion": "Check your Node.js installation"
+                        })
+                        return
+
+            # For other commands, just verify the binary exists
+            self.send_json_response({
+                "ok": True,
+                "valid": True,
+                "command_path": cmd_path,
+                "message": f"Command '{command}' found at {cmd_path}"
+            })
+
+        except Exception as e:
+            print(f"[SERVER] Error validating MCP server: {e}")
+            self.send_json_response({"ok": False, "error": str(e), "valid": False})
 
     def handle_cli_config_profiles_list(self, provider: str):
         """List available profiles for a provider."""
@@ -4646,7 +5000,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 cmd_parts.append("evo_config.agentic_mode=true")
                 cmd_parts.append(f"evo_config.agentic.backend={ui_config.agent_backend}")
                 cmd_parts.append(f"evo_config.agentic.sandbox={ui_config.agent_sandbox}")
-                cmd_parts.append(f"evo_config.agentic.max_turns={ui_config.agent_max_turns}")
+                cmd_parts.append(f"evo_config.agentic.max_events={ui_config.agent_max_turns}")
                 if ui_config.agent_max_seconds > 0:
                     cmd_parts.append(f"evo_config.agentic.max_seconds={ui_config.agent_max_seconds}")
                 if ui_config.llm_models:
@@ -4667,7 +5021,7 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             if ui_config.evaluator_mode == "agentic":
                 # Only if using agentic evaluator
                 cmd_parts.append(f"evo_config.evaluator.agentic.backend={ui_config.eval_backend}")
-                cmd_parts.append(f"evo_config.evaluator.agentic.max_turns={ui_config.eval_max_turns}")
+                cmd_parts.append(f"evo_config.evaluator.agentic.max_events={ui_config.eval_max_turns}")
                 if ui_config.eval_prompt:
                      escaped_eval = ui_config.eval_prompt.replace("'", "'\\''")
                      cmd_parts.append(f"evo_config.evaluator.agentic.eval_prompt='{escaped_eval}'")
@@ -4712,6 +5066,26 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 cmd_parts.append(f"job_config.eval_program_path={ui_config.eval_program_path}")
             else:
                 cmd_parts.append("job_config.eval_program_path=null")
+
+            # Backend Bandit configuration
+            if ui_config.bandit_enabled:
+                cmd_parts.append("evo_config.agentic.bandit_selection=true")
+                if ui_config.bandit_backends:
+                    backends_str = ",".join(ui_config.bandit_backends)
+                    cmd_parts.append(f"evo_config.agentic.bandit_kwargs.allowed_backends='[{backends_str}]'")
+                cmd_parts.append(f"evo_config.agentic.bandit_kwargs.epsilon={ui_config.bandit_epsilon}")
+                cmd_parts.append(f"evo_config.agentic.bandit_kwargs.exploration_coef={ui_config.bandit_exploration_coef}")
+                cmd_parts.append(f"evo_config.agentic.bandit_kwargs.auto_decay={ui_config.bandit_auto_decay}")
+                if ui_config.bandit_use_global_history:
+                    cmd_parts.append("evo_config.agentic.use_global_bandit_history=true")
+                if ui_config.bandit_record_to_history:
+                    cmd_parts.append("evo_config.agentic.record_to_global_history=true")
+
+            # Scratchpad/Meta-learning configuration
+            if ui_config.scratchpad_enabled:
+                cmd_parts.append(f"evo_config.meta_rec_interval={ui_config.scratchpad_interval}")
+                cmd_parts.append(f"evo_config.meta_backend={ui_config.scratchpad_backend}")
+                cmd_parts.append(f"evo_config.meta_max_recommendations={ui_config.scratchpad_max_recommendations}")
 
             command = " ".join(cmd_parts)
 
@@ -5094,12 +5468,20 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 f"++evo_config.agentic_mode={str(evo_config.agentic_mode).lower()}",
                 f"++evo_config.agentic.backend={evo_config.agentic.backend}",
                 f"++evo_config.agentic.sandbox={evo_config.agentic.sandbox}",
-                f"++evo_config.agentic.max_turns={evo_config.agentic.max_turns}",
+                f"++evo_config.agentic.max_events={evo_config.agentic.max_events}",
+                f"++evo_config.agentic.bandit_selection={str(evo_config.agentic.bandit_selection).lower()}",
+                f"++evo_config.agentic.use_global_bandit_history={str(evo_config.agentic.use_global_bandit_history).lower()}",
+                f"++evo_config.agentic.record_to_global_history={str(evo_config.agentic.record_to_global_history).lower()}",
+                f"++evo_config.agentic.approval_mode={evo_config.agentic.approval_mode}",
+                f"++evo_config.agentic.max_seconds={evo_config.agentic.max_seconds}",
                 f"++evo_config.evaluator.mode={evo_config.evaluator.mode}",
                 f"++evo_config.num_generations={evo_config.num_generations}",
                 f"++evo_config.max_parallel_jobs={evo_config.max_parallel_jobs}",
                 f"++db_config.num_islands={db_config.num_islands}",
                 f"++db_config.archive_size={db_config.archive_size}",
+                f"++db_config.migration_interval={db_config.migration_interval}",
+                f"++db_config.migration_rate={db_config.migration_rate}",
+                f"++db_config.island_elitism={str(db_config.island_elitism).lower()}",
                 f"++evo_config.job_type={evo_config.job_type}",
                 f"++run_name={run_name}",
                 # Point to the target workspace seed if provided; null disables defaults
@@ -5133,7 +5515,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             # Add evaluator agentic config if mode is agentic
             if evo_config.evaluator.mode == "agentic" and evo_config.evaluator.agentic:
-                overrides.append(f"++evo_config.evaluator.agentic.max_turns={evo_config.evaluator.agentic.max_turns or 80}")
+                if evo_config.evaluator.agentic.backend:
+                    overrides.append(f"++evo_config.evaluator.agentic.backend={evo_config.evaluator.agentic.backend}")
+                overrides.append(f"++evo_config.evaluator.agentic.max_events={evo_config.evaluator.agentic.max_events or 80}")
                 overrides.append(f"++evo_config.evaluator.agentic.sandbox={evo_config.evaluator.agentic.sandbox or 'workspace-write'}")
                 if getattr(evo_config.evaluator.agentic, "eval_prompt", None) is not None:
                     escaped_eval = evo_config.evaluator.agentic.eval_prompt.replace("'", "\\'")
@@ -5147,6 +5531,48 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Add LLM models if specified
             if evo_config.llm_models:
                 overrides.append(f"++evo_config.llm_models=[{','.join(evo_config.llm_models)}]")
+
+            # Add bandit_kwargs if bandit is enabled
+            if evo_config.agentic.bandit_selection and evo_config.agentic.bandit_kwargs:
+                bk = evo_config.agentic.bandit_kwargs
+                if "epsilon" in bk:
+                    overrides.append(f"++evo_config.agentic.bandit_kwargs.epsilon={bk['epsilon']}")
+                if "exploration_coef" in bk:
+                    overrides.append(f"++evo_config.agentic.bandit_kwargs.exploration_coef={bk['exploration_coef']}")
+                if "auto_decay" in bk:
+                    overrides.append(f"++evo_config.agentic.bandit_kwargs.auto_decay={str(bk['auto_decay']).lower()}")
+                if "allowed_backends" in bk and bk["allowed_backends"]:
+                    backends_list = '[' + ','.join(bk["allowed_backends"]) + ']'
+                    overrides.append(f"++evo_config.agentic.bandit_kwargs.allowed_backends={backends_list}")
+
+            # Add scratchpad/meta-learning configuration
+            if evo_config.meta_rec_interval is not None:
+                overrides.append(f"++evo_config.meta_rec_interval={evo_config.meta_rec_interval}")
+            else:
+                overrides.append("++evo_config.meta_rec_interval=null")
+            if evo_config.meta_backend:
+                overrides.append(f"++evo_config.meta_backend={evo_config.meta_backend}")
+            if evo_config.meta_max_recommendations:
+                overrides.append(f"++evo_config.meta_max_recommendations={evo_config.meta_max_recommendations}")
+
+            # Add novelty detection and patch settings
+            overrides.append(f"++evo_config.max_novelty_attempts={evo_config.max_novelty_attempts}")
+            overrides.append(f"++evo_config.max_patch_attempts={evo_config.max_patch_attempts}")
+            overrides.append(f"++evo_config.max_patch_resamples={evo_config.max_patch_resamples}")
+            overrides.append(f"++evo_config.code_embed_sim_threshold={evo_config.code_embed_sim_threshold}")
+            overrides.append(f"++evo_config.novelty_exclude_parent={str(evo_config.novelty_exclude_parent).lower()}")
+
+            # Add embedding scale settings
+            overrides.append(f"++evo_config.embedding_max_files={evo_config.embedding_max_files}")
+            overrides.append(f"++evo_config.embedding_max_total_bytes={evo_config.embedding_max_total_bytes}")
+            overrides.append(f"++evo_config.embedding_max_bytes_per_file={evo_config.embedding_max_bytes_per_file}")
+
+            # Add cleanup settings
+            overrides.append(f"++evo_config.cleanup_old_generations={str(evo_config.cleanup_old_generations).lower()}")
+            overrides.append(f"++evo_config.cleanup_keep_last_n={evo_config.cleanup_keep_last_n}")
+
+            # Add language setting
+            overrides.append(f"++evo_config.language={evo_config.language}")
 
             cmd_parts.extend(overrides)
 
@@ -5257,8 +5683,20 @@ def create_handler_factory(search_root):
     return handler_factory
 
 
-def start_server(port: int, search_root: str, db_path: Optional[str] = None):
-    """Start the HTTP server."""
+def start_server(
+    port: int,
+    search_root: str,
+    db_path: Optional[str] = None,
+    bind_addr: str = "127.0.0.1",
+):
+    """Start the HTTP server.
+
+    Args:
+        port: Port to listen on.
+        search_root: Root directory for database search.
+        db_path: Optional specific database path.
+        bind_addr: Address to bind to (default: 127.0.0.1 for localhost only).
+    """
     # Change to the webui directory inside the shinka package to serve static files
     webui_dir = os.path.dirname(__file__)
     webui_dir = os.path.abspath(webui_dir)
@@ -5277,8 +5715,11 @@ def start_server(port: int, search_root: str, db_path: Optional[str] = None):
     class ReusableTCPServer(socketserver.TCPServer):
         allow_reuse_address = True
 
-    with ReusableTCPServer(("", port), handler_factory) as httpd:
-        msg = f"\n[*] Serving http://0.0.0.0:{port}  (Ctrl+C to stop)"
+    with ReusableTCPServer((bind_addr, port), handler_factory) as httpd:
+        display_addr = "localhost" if bind_addr == "127.0.0.1" else bind_addr
+        msg = f"\n[*] Serving http://{display_addr}:{port}  (Ctrl+C to stop)"
+        if bind_addr == "0.0.0.0":
+            msg += "\n[!] WARNING: Server is accessible from external networks"
         print(msg)
         httpd.serve_forever()
 
@@ -5315,6 +5756,12 @@ def main():
         default=None,
         help="Path to a specific database file to serve.",
     )
+    parser.add_argument(
+        "--bind",
+        type=str,
+        default="127.0.0.1",
+        help="Address to bind to (default: 127.0.0.1 for localhost only). Use 0.0.0.0 for external access.",
+    )
     args = parser.parse_args()
 
     # Resolve the root directory to an absolute path
@@ -5329,7 +5776,7 @@ def main():
     # Kick off the HTTP server in a daemon thread.
     server_thread = threading.Thread(
         target=start_server,
-        args=(args.port, search_root, args.db),
+        args=(args.port, search_root, args.db, args.bind),
         daemon=True,
     )
     server_thread.start()

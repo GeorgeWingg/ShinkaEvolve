@@ -87,6 +87,41 @@ from shinka.core.embedding_corpus import (
     EmbeddingCorpus,
 )
 from shinka.logo import print_gradient_logo
+from shinka.webui.git_worktree import EvolutionGitManager
+
+# -----------------------------------------------------------------------------
+# Thread-Safety Model
+# -----------------------------------------------------------------------------
+#
+# EvolutionRunner uses ThreadPoolExecutors for parallel agentic edits and
+# evaluations. The threading model is as follows:
+#
+# THREAD-SAFE STATE (protected by locks):
+#   - self.running_jobs: List[RunningJob]
+#       Protected by: self._jobs_lock (threading.Lock)
+#       Used in: _check_completed_jobs(), _submit_new_job(), _process_completed_job()
+#
+#   - self._active_scratch_dirs: Set[Path]
+#       Protected by: self._scratch_dir_lock (threading.Lock)
+#       Used in: _register_scratch_dir(), _unregister_scratch_dir(), _cleanup_scratch_dirs()
+#
+# SINGLE-THREADED STATE (main thread only):
+#   - self.best_program_id: Only updated in main loop after jobs complete
+#   - self.completed_generations: Counter updated in main loop
+#   - self.next_generation_to_submit: Counter advanced in main loop
+#   - self.db: ProgramDatabase - all writes happen in main thread via _process_completed_job()
+#   - self._stagnation_counter, self._best_score_seen: Stagnation tracking in main loop
+#
+# WORKER THREADS (ThreadPoolExecutor):
+#   - _run_agentic_patch_worker(): Executes agentic edit sessions
+#   - _run_agentic_eval_worker(): Executes agentic evaluations
+#   - Workers return results via Future objects; main thread processes results
+#
+# IMPORTANT:
+#   - All database writes (self.db.add(), etc.) are done on the main thread
+#   - Workers only prepare data and return it; they don't write to shared state
+#   - The main loop polls for completed jobs every 2 seconds
+# -----------------------------------------------------------------------------
 
 FOLDER_PREFIX = "gen"
 
@@ -181,13 +216,17 @@ class AgenticConfig:
         import warnings
 
         # 1. Handle deprecated max_turns → max_events
+        # Handle Hydra passing "None" as a string instead of Python None
+        if isinstance(self.max_turns, str) and self.max_turns.lower() == "none":
+            self.max_turns = None
         if self.max_turns is not None:
             warnings.warn(
                 "AgenticConfig.max_turns is deprecated, use max_events instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            self.max_events = self.max_turns
+            # Ensure it's an integer
+            self.max_events = int(self.max_turns)
 
         # 2. Bridge: Merge typed JulesConfig into extra_cli_config for legacy backend
         if self.backend == "jules" and self.jules:
@@ -272,13 +311,17 @@ class AgenticEvaluatorConfig:
         import warnings
 
         # Handle deprecated max_turns → max_events
+        # Handle Hydra passing "None" as a string instead of Python None
+        if isinstance(self.max_turns, str) and self.max_turns.lower() == "none":
+            self.max_turns = None
         if self.max_turns is not None:
             warnings.warn(
                 "AgenticEvaluatorConfig.max_turns is deprecated, use max_events instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            self.max_events = self.max_turns
+            # Ensure it's an integer
+            self.max_events = int(self.max_turns)
 
     # Deprecated aliases for backward compatibility
     @property
@@ -490,9 +533,11 @@ class EvolutionConfig:
     agentic_entrypoint_path: Optional[str] = None
     results_dir: Optional[str] = None
     max_novelty_attempts: int = 3
-    code_embed_sim_threshold: float = 1.0
+    code_embed_sim_threshold: float = 0.85
+    novelty_error_accepts: bool = False
     novelty_llm_models: Optional[List[str]] = None
     novelty_llm_kwargs: dict = field(default_factory=lambda: {})
+    novelty_exclude_parent: bool = False  # If True, exclude parent from similarity comparison
     use_text_feedback: bool = False
     agentic_mode: bool = False
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
@@ -502,6 +547,8 @@ class EvolutionConfig:
     git_backed_storage: bool = False  # Opt-in, default off until fully validated
     git_repo_path: Optional[str] = None  # Override default location (results/<task>/<run>/evolution.git)
     max_score: float = 1.0  # Maximum possible score (defines the scale)
+    # Stagnation detection: stop early if best score hasn't improved for N generations
+    stagnation_generations: int = 20  # 0 = disabled
 
 
 @dataclass
@@ -594,6 +641,40 @@ class RunningJob:
 logger = logging.getLogger(__name__)
 
 
+def cleanup_stale_scratch_dirs(scratch_base: Path, max_age_hours: float = 24.0) -> List[Path]:
+    """Clean up scratch directories older than max_age_hours.
+
+    Args:
+        scratch_base: Base directory for scratch directories
+        max_age_hours: Maximum age in hours before a directory is considered stale
+
+    Returns:
+        List of paths that were cleaned up
+    """
+    if not scratch_base.exists():
+        return []
+
+    import time
+    current_time = time.time()
+    max_age_seconds = max_age_hours * 3600
+    cleaned: List[Path] = []
+
+    for child in scratch_base.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            # Check modification time
+            mtime = child.stat().st_mtime
+            age_seconds = current_time - mtime
+            if age_seconds > max_age_seconds:
+                shutil.rmtree(child, ignore_errors=True)
+                cleaned.append(child)
+        except Exception:
+            pass
+
+    return cleaned
+
+
 class EvolutionRunner:
     def __init__(
         self,
@@ -628,10 +709,21 @@ class EvolutionRunner:
         Path(self.results_dir).mkdir(parents=True, exist_ok=True)
         self._pid_file_path = Path(self.results_dir) / "shinka.pid"
         self._pid_file_path.write_text(str(os.getpid()))
-        
+
+        # Track active scratch directories for cleanup on exit/crash
+        self._active_scratch_dirs: Set[Path] = set()
+        self._scratch_dir_lock = threading.Lock()
+
+        # Clean up stale scratch directories from previous crashed runs
+        scratch_base = Path("/tmp/shinka_scratch")
+        cleaned = cleanup_stale_scratch_dirs(scratch_base, max_age_hours=24.0)
+        if cleaned:
+            logger.info(f"Cleaned {len(cleaned)} stale scratch directories from previous runs")
+
         # Register cleanup handlers to remove PID file on exit
         atexit.register(self._cleanup_pid_file)
         atexit.register(self._shutdown_executors)
+        atexit.register(self._cleanup_scratch_dirs)
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
@@ -719,12 +811,12 @@ class EvolutionRunner:
                                         # Warm start the UCB with historical data
                                         # Scale down to not overwhelm new data
                                         scale = min(1.0, 10.0 / (successes + failures + 1))
-                                        self.backend_bandit._bandit.n_completed[
-                                            self.backend_bandit._bandit.arm_names.index(backend)
-                                        ] = int((successes + failures) * scale)
-                                        self.backend_bandit._bandit.s[
-                                            self.backend_bandit._bandit.arm_names.index(backend)
-                                        ] = successes * scale
+                                        arm_idx = self.backend_bandit._bandit.arm_names.index(backend)
+                                        total_trials = int((successes + failures) * scale)
+                                        # Set n_submitted to match n_completed for proper UCB exploration bonus
+                                        self.backend_bandit._bandit.n_submitted[arm_idx] = total_trials
+                                        self.backend_bandit._bandit.n_completed[arm_idx] = total_trials
+                                        self.backend_bandit._bandit.s[arm_idx] = successes * scale
                             if self.verbose:
                                 logger.info(
                                     f"Loaded global bandit priors for backends: {list(priors.keys())}"
@@ -736,6 +828,19 @@ class EvolutionRunner:
         else:
             self.backend_bandit = None
             self._bandit_history = None
+
+        # Initialize git manager for git-backed storage mode
+        self.git_manager: Optional[EvolutionGitManager] = None
+        self._initial_git_sha: Optional[str] = None  # SHA of generation 0 seed
+        if evo_config.git_backed_storage:
+            git_repo_path = (
+                Path(evo_config.git_repo_path)
+                if evo_config.git_repo_path
+                else Path(self.results_dir) / "evolution.git"
+            )
+            self.git_manager = EvolutionGitManager(git_repo_path)
+            if self.verbose:
+                logger.info(f"Git-backed storage enabled at: {git_repo_path}")
 
         # Initialize database and scheduler
         db_config.db_path = str(db_path)
@@ -894,6 +999,13 @@ class EvolutionRunner:
             agentic_mode=evo_config.agentic_mode,
             agent_runner=meta_agent_runner,
             agent_config=novelty_agent_config,
+            code_loader=(
+                (lambda program: program.get_code_content(self.git_manager))
+                if self.git_manager is not None
+                else None
+            ),
+            error_accepts=evo_config.novelty_error_accepts,
+            exclude_parent=evo_config.novelty_exclude_parent,
         )
 
         # Initialize rich console for formatted output
@@ -918,6 +1030,10 @@ class EvolutionRunner:
         self._jobs_lock = threading.Lock()
         self.best_program_id: Optional[str] = None
         self.next_generation_to_submit = 0
+
+        # Stagnation tracking: stop early if score doesn't improve
+        self._stagnation_counter: int = 0
+        self._best_score_seen: float = float("-inf")
         
         # ThreadPoolExecutors for parallel agentic editing and evaluation.
         # Edits are now executed in parallel workers; evaluation parallelism
@@ -1000,16 +1116,59 @@ class EvolutionRunner:
                 executor.shutdown(wait=False, cancel_futures=True)
             except TypeError:  # pragma: no cover - older Python
                 executor.shutdown(wait=False)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error shutting down executor (ignored): {e}")
 
     def _signal_handler(self, signum: int, frame) -> None:
         """Handle SIGTERM/SIGINT by cleaning up PID file and exiting."""
         self._cleanup_pid_file()
         self._shutdown_executors()
+        self._cleanup_scratch_dirs()
         # Re-raise the signal with default handler to ensure proper exit
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
+
+    def _cleanup_scratch_dirs(self) -> None:
+        """Clean up all tracked scratch directories."""
+        with self._scratch_dir_lock:
+            for d in list(self._active_scratch_dirs):
+                if d.exists():
+                    try:
+                        shutil.rmtree(d, ignore_errors=True)
+                    except Exception as e:
+                        logger.debug(f"Error cleaning up scratch dir {d} (ignored): {e}")
+
+    def _register_scratch_dir(self, path: Path) -> None:
+        """Register a scratch directory for cleanup on exit."""
+        with self._scratch_dir_lock:
+            self._active_scratch_dirs.add(path)
+
+    def _unregister_scratch_dir(self, path: Path) -> None:
+        """Unregister a scratch directory (already cleaned up)."""
+        with self._scratch_dir_lock:
+            self._active_scratch_dirs.discard(path)
+
+    def _check_stagnation(self, current_best_score: float) -> bool:
+        """Check if evolution has stagnated (no improvement for N generations).
+
+        Returns True if we should stop early due to stagnation.
+        Updates internal tracking state.
+        """
+        # Disabled if stagnation_generations == 0
+        if self.evo_config.stagnation_generations <= 0:
+            return False
+
+        if current_best_score > self._best_score_seen:
+            # Improvement! Reset counter
+            self._best_score_seen = current_best_score
+            self._stagnation_counter = 0
+            return False
+        else:
+            # No improvement
+            self._stagnation_counter += 1
+            if self._stagnation_counter >= self.evo_config.stagnation_generations:
+                return True
+            return False
 
     def _save_experiment_config(
         self,
@@ -1034,6 +1193,11 @@ class EvolutionRunner:
 
         logger.info(f"Experiment configuration saved to {config_path}")
 
+    def _running_jobs_count(self) -> int:
+        """Thread-safe read of running jobs count."""
+        with self._jobs_lock:
+            return len(self.running_jobs)
+
     def run(self):
         """Run evolution with parallel job queue."""
         max_jobs = self.evo_config.max_parallel_jobs
@@ -1043,73 +1207,91 @@ class EvolutionRunner:
             f"target: {target_gens} generations"
         )
 
-        # First, run generation 0 sequentially to populate the database
-        if self.completed_generations == 0 and target_gens > 0:
-            logger.info("Running generation 0 sequentially to initialize database...")
-            self._run_generation_0()
-            self.completed_generations = 1
-            self.next_generation_to_submit = 1
-            logger.info(f"Completed generation 0, total: 1/{target_gens}")
+        try:
+            # First, run generation 0 sequentially to populate the database
+            if self.completed_generations == 0 and target_gens > 0:
+                logger.info("Running generation 0 sequentially to initialize database...")
+                self._run_generation_0()
+                # Validate that generation 0 actually produced programs
+                gen0_programs = self.db.get_programs_by_generation(0)
+                if not gen0_programs:
+                    raise RuntimeError(
+                        "Generation 0 initialization failed: no programs were added to the database. "
+                        "Check initial program path and evaluator configuration."
+                    )
+                self.completed_generations = 1
+                self.next_generation_to_submit = 1
+                logger.info(f"Completed generation 0, total: 1/{target_gens}")
 
-        # Now start parallel execution for remaining generations
-        if self.completed_generations < target_gens:
-            logger.info("Starting parallel execution for remaining generations...")
+            # Now start parallel execution for remaining generations
+            if self.completed_generations < target_gens:
+                logger.info("Starting parallel execution for remaining generations...")
 
-            # Main loop: monitor jobs and submit new ones
-            while (
-                self.completed_generations < target_gens or len(self.running_jobs) > 0
-            ):
-                # Check for completed jobs
-                completed_edits, completed_jobs = self._check_completed_jobs()
-
-                # Process completed agentic edits first (may enqueue eval or resubmit edits)
-                if completed_edits:
-                    for job in completed_edits:
-                        self._process_completed_edit_job(job)
-
-                # Process completed evaluations
-                if completed_jobs:
-                    for job in completed_jobs:
-                        self._process_completed_job(job)
-
-                    # Update completed generations count
-                    self._update_completed_generations()
-
-                    if self.verbose:
-                        logger.info(
-                            f"Processed {len(completed_jobs)} eval jobs. "
-                            f"Total completed generations: "
-                            f"{self.completed_generations}/{target_gens}"
-                        )
-
-                # Check if we've completed all generations
-                if self.completed_generations >= target_gens:
-                    logger.info("All generations completed, exiting...")
-                    break
-
-                # Submit new jobs to fill the queue (only if we have capacity)
-                if (
-                    len(self.running_jobs) < max_jobs
-                    and self.next_generation_to_submit < target_gens
+                # Main loop: monitor jobs and submit new ones
+                while (
+                    self.completed_generations < target_gens or self._running_jobs_count() > 0
                 ):
-                    self._submit_new_job()
+                    # Check for completed jobs
+                    completed_edits, completed_jobs = self._check_completed_jobs()
 
-                # Wait a bit before checking again
-                time.sleep(2)
+                    # Process completed agentic edits first (may enqueue eval or resubmit edits)
+                    if completed_edits:
+                        for job in completed_edits:
+                            self._process_completed_edit_job(job)
 
-            # All jobs are now handled by the main loop above
+                    # Process completed evaluations
+                    if completed_jobs:
+                        for job in completed_jobs:
+                            self._process_completed_job(job)
 
-        # Shutdown agentic executors if they were created
-        if self._agentic_edit_executor is not None:
-            logger.info("Shutting down agentic edit executor...")
-            self._agentic_edit_executor.shutdown(wait=True)
-            self._agentic_edit_executor = None
-        if self._agentic_executor is not None:
-            logger.info("Shutting down agentic eval executor...")
-            self._agentic_executor.shutdown(wait=True)
-            self._agentic_executor = None
+                        # Update completed generations count
+                        self._update_completed_generations()
 
-        # Perform final meta summary for any remaining unprocessed programs
+                        if self.verbose:
+                            logger.info(
+                                f"Processed {len(completed_jobs)} eval jobs. "
+                                f"Total completed generations: "
+                                f"{self.completed_generations}/{target_gens}"
+                            )
+
+                        # Check for stagnation after processing jobs
+                        best_program = self.db.get_best_program()
+                        if best_program and best_program.combined_score is not None:
+                            if self._check_stagnation(best_program.combined_score):
+                                logger.warning(
+                                    f"Evolution stagnated after {self._stagnation_counter} "
+                                    f"generations without improvement. Stopping early."
+                                )
+                                break
+
+                    # Check if we've completed all generations
+                    if self.completed_generations >= target_gens:
+                        logger.info("All generations completed, exiting...")
+                        break
+
+                    # Submit new jobs to fill the queue (only if we have capacity)
+                    if (
+                        self._running_jobs_count() < max_jobs
+                        and self.next_generation_to_submit < target_gens
+                    ):
+                        self._submit_new_job()
+
+                    # Wait a bit before checking again
+                    time.sleep(2)
+
+                # All jobs are now handled by the main loop above
+
+        except Exception as e:
+            logger.error(f"Evolution failed with exception: {e}", exc_info=True)
+            raise
+        finally:
+            # Always shutdown executors, even on exception
+            try:
+                self._shutdown_executors_safe()
+            except Exception as e:
+                logger.warning(f"Error during executor shutdown (ignored): {e}")
+
+        # Post-run summary (only executes on successful completion)
         best_program = self.db.get_best_program()
         self.meta_summarizer.perform_final_summary(str(self.results_dir), best_program)
 
@@ -1122,6 +1304,21 @@ class EvolutionRunner:
         end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"Evolution run ended at {end_time}")
         logger.info("=" * 80)
+
+    def _shutdown_executors_safe(self) -> None:
+        """Shutdown all executors safely, even on exception."""
+        # Use wait=False to avoid blocking on exception
+        if self._agentic_edit_executor is not None:
+            logger.info("Shutting down agentic edit executor...")
+            self._agentic_edit_executor.shutdown(wait=False)
+            self._agentic_edit_executor = None
+        if self._agentic_executor is not None:
+            logger.info("Shutting down agentic eval executor...")
+            self._agentic_executor.shutdown(wait=False)
+            self._agentic_executor = None
+        if self.scheduler is not None:
+            logger.info("Shutting down job scheduler...")
+            self.scheduler.shutdown()
 
     def generate_initial_program(self):
         """Generate initial program with LLM, with retries."""
@@ -1314,8 +1511,26 @@ class EvolutionRunner:
                     }
                 }
 
+                # Pre-generate program ID for git ref
+                program_id = str(uuid.uuid4())
+
+                # Initialize git-backed storage with seed files
+                git_commit_sha = None
+                if self.git_manager is not None:
+                    try:
+                        git_commit_sha = self.git_manager.init_from_workspace(
+                            workspace_path=initial_dir_path,
+                            message="Initial seed (empty)",
+                            node_uuid=program_id,
+                        )
+                        self._initial_git_sha = git_commit_sha
+                        if self.verbose:
+                            logger.info(f"Git seed commit (empty): {git_commit_sha[:8]}")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize git-backed storage: {e}")
+
                 db_program = Program(
-                    id=str(uuid.uuid4()),
+                    id=program_id,
                     code=initial_corpus.text,
                     language=self.evo_config.language,
                     parent_id=None,
@@ -1341,6 +1556,7 @@ class EvolutionRunner:
                         "stderr_log": "",
                         "evaluator_mode": self.evaluator_mode,
                         "skipped_gen0_eval": True,
+                        **({"git_commit_sha": git_commit_sha} if git_commit_sha else {}),
                         **corpus_meta,
                     },
                 )
@@ -1411,8 +1627,26 @@ class EvolutionRunner:
             }
         }
 
+        # Pre-generate program ID for git ref
+        program_id = str(uuid.uuid4())
+
+        # Initialize git-backed storage with seed files
+        git_commit_sha = None
+        if self.git_manager is not None:
+            try:
+                git_commit_sha = self.git_manager.init_from_workspace(
+                    workspace_path=Path(initial_dir),
+                    message="Initial seed",
+                    node_uuid=program_id,
+                )
+                self._initial_git_sha = git_commit_sha
+                if self.verbose:
+                    logger.info(f"Git seed commit: {git_commit_sha[:8]}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize git-backed storage: {e}")
+
         db_program = Program(
-            id=str(uuid.uuid4()),
+            id=program_id,
             code=initial_corpus.text,
             language=self.evo_config.language,
             parent_id=None,
@@ -1437,6 +1671,7 @@ class EvolutionRunner:
                 "stdout_log": stdout_log,
                 "stderr_log": stderr_log,
                 "evaluator_mode": self.evaluator_mode,
+                **({"git_commit_sha": git_commit_sha} if git_commit_sha else {}),
                 **corpus_meta,
             },
         )
@@ -2035,7 +2270,7 @@ class EvolutionRunner:
                         job.edit_future = None
                         job.status = "awaiting_novelty"
                         completed_edits.append(job)
-                if (
+                elif (
                     job.edit_future is None
                     and job.edit_result is not None
                     and job.status == "awaiting_novelty"
@@ -2319,6 +2554,27 @@ class EvolutionRunner:
         # Commit workspace changes and get the commit SHA (for isolated workspaces)
         commit_sha = self._commit_workspace_changes(program_id, job.generation)
 
+        # Create git commit in evolution.git for git-backed storage
+        git_commit_sha = None
+        if self.git_manager is not None:
+            # Get parent's git commit SHA
+            parent_git_sha = None
+            if job.parent_program is not None:
+                # Try to get SHA from parent's metadata
+                parent_meta = job.parent_program.metadata or {}
+                parent_git_sha = parent_meta.get("git_commit_sha")
+            # Fallback to initial SHA for generation 1 or if parent has no SHA
+            if parent_git_sha is None:
+                parent_git_sha = self._initial_git_sha
+
+            if parent_git_sha:
+                git_commit_sha = self._git_commit_generation(
+                    generation_dir=job.generation_dir,
+                    generation=job.generation,
+                    node_uuid=program_id,
+                    parent_sha=parent_git_sha,
+                )
+
         db_program = Program(
             id=program_id,
             code=corpus_text,
@@ -2343,6 +2599,7 @@ class EvolutionRunner:
                 "stderr_log": stderr_log,
                 "evaluator_mode": self.evaluator_mode,
                 **({"commit_sha": commit_sha} if commit_sha else {}),
+                **({"git_commit_sha": git_commit_sha} if git_commit_sha else {}),
             },
         )
         if agentic_eval_meta:
@@ -2353,7 +2610,13 @@ class EvolutionRunner:
             if db_program.metadata is None:
                 db_program.metadata = {}
             db_program.metadata["ensemble_evaluation"] = ensemble_eval_meta
-        self.db.add(db_program, verbose=True)
+        # Pass parent's island_idx to avoid DB lookup during island assignment
+        parent_island_idx = (
+            job.parent_program.island_idx
+            if job.parent_program is not None
+            else None
+        )
+        self.db.add(db_program, verbose=True, parent_island_idx=parent_island_idx)
 
         # Add the evaluated program to meta memory tracking
         self.meta_summarizer.add_evaluated_program(db_program)
@@ -2925,21 +3188,45 @@ class EvolutionRunner:
             else:
                 selected_backend = self.evo_config.agentic.backend
 
-        try:
-            if selected_backend == "gemini":
-                ensure_gemini_available(self.evo_config.agentic.cli_path)
-            elif selected_backend == "claude":
-                ensure_claude_available(self.evo_config.agentic.cli_path)
-            elif selected_backend == "shinka":
-                ensure_shinka_available()
-            elif selected_backend == "jules":
-                # Jules needs github_repo from extra_cli_config to verify repo is connected
-                github_repo = self.evo_config.agentic.extra_cli_config.get("github_repo")
-                ensure_jules_available(github_repo)
-            else:
-                ensure_codex_available(self.evo_config.agentic.cli_path)
-        except (CodexUnavailableError, GeminiUnavailableError, ClaudeUnavailableError, ShinkaUnavailableError, JulesUnavailableError) as exc:  # pragma: no cover - system dep
-            return failure_meta(str(exc))
+        # Try to ensure the selected backend is available, with fallback to alternatives
+        excluded_backends: List[str] = []
+        while True:
+            try:
+                if selected_backend == "gemini":
+                    ensure_gemini_available(self.evo_config.agentic.cli_path)
+                elif selected_backend == "claude":
+                    ensure_claude_available(self.evo_config.agentic.cli_path)
+                elif selected_backend == "shinka":
+                    ensure_shinka_available()
+                elif selected_backend == "jules":
+                    # Jules needs github_repo from extra_cli_config to verify repo is connected
+                    github_repo = self.evo_config.agentic.extra_cli_config.get("github_repo")
+                    ensure_jules_available(github_repo)
+                else:
+                    ensure_codex_available(self.evo_config.agentic.cli_path)
+                break  # Backend is available, proceed
+            except (CodexUnavailableError, GeminiUnavailableError, ClaudeUnavailableError, ShinkaUnavailableError, JulesUnavailableError) as exc:
+                # Backend unavailable - try to fall back to another if bandit is available
+                if self.backend_bandit is None:
+                    return failure_meta(str(exc))
+
+                excluded_backends.append(selected_backend)
+                if self.verbose:
+                    logger.warning(
+                        f"Backend '{selected_backend}' unavailable: {exc}. "
+                        f"Attempting fallback (excluded: {excluded_backends})"
+                    )
+
+                try:
+                    selected_backend = self.backend_bandit.sample_with_fallback(
+                        exclude=excluded_backends
+                    )
+                    if self.verbose:
+                        logger.info(f"Falling back to backend: {selected_backend}")
+                except NoAuthenticatedBackendsError as fallback_exc:
+                    return failure_meta(
+                        f"All backends failed. Original: {exc}. Fallback: {fallback_exc}"
+                    )
 
         # Create scratch directory outside any git repo to prevent Codex CLI from
         # discovering parent AGENTS.md files. If scratch_dir_base is None, fall
@@ -2949,6 +3236,8 @@ class EvolutionRunner:
             scratch_base = Path(self.evo_config.agentic.scratch_dir_base)
             scratch_base.mkdir(parents=True, exist_ok=True)
             session_root = scratch_base / session_uuid
+            # Register for process-level cleanup on crash/exit
+            self._register_scratch_dir(session_root)
         else:
             session_root = (
                 Path(self.results_dir)
@@ -2958,192 +3247,200 @@ class EvolutionRunner:
 
         # Write session metadata for visualization to track in-progress jobs
         session_root.mkdir(parents=True, exist_ok=True)
-        session_meta = {
-            "parent_id": parent_program.id,
-            "generation": generation,
-            "patch_type": patch_type,
-            "novelty_attempt": novelty_attempt,
-            "resample_attempt": resample_attempt,
-            "start_time": time.time(),
-            "results_dir": str(self.results_dir),
-        }
+
+        # Wrap in try/finally to ensure cleanup on all exit paths
         try:
-            with open(session_root / "session_meta.json", 'w') as f:
-                json.dump(session_meta, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to write session_meta.json: {e}")
-
-        helper_files = sorted(base_files.keys())
-
-        system_prompt = patch_sys.strip()
-        if helper_files:
-            max_helpers = 50
-            listed_helpers = helper_files[:max_helpers]
-            helper_listing = "\n".join(
-                f"- {path.as_posix()}" for path in listed_helpers
-            )
-            if len(helper_files) > max_helpers:
-                helper_listing += (
-                    f"\n- ... and {len(helper_files) - max_helpers} more files"
-                )
-            system_prompt += (
-                "\n\n# Workspace Files\n"
-                "The following files were copied from the parent workspace; "
-                "edit any that your improvement touches so evaluation can run without manual fixes:\n"
-                f"{helper_listing}"
-                "\n\nWhen workspace files are available you are expected to update at least one of them whenever your idea relies on shared utilities. "
-                "If you believe no helper change is required, record that decision with a short comment inside the most relevant file so the run is not discarded."
-            )
-
-        context = AgentContext(
-            user_prompt=patch_msg.strip(),
-            system_prompt=system_prompt,
-            language=self.evo_config.language,
-            base_files=base_files,
-            primary_file=primary_filename,
-            metadata={
+            session_meta = {
+                "parent_id": parent_program.id,
                 "generation": generation,
+                "patch_type": patch_type,
                 "novelty_attempt": novelty_attempt,
                 "resample_attempt": resample_attempt,
-                "patch_type": patch_type,
+                "start_time": time.time(),
                 "results_dir": str(self.results_dir),
-            },
-            resume_session_id=resume_session_id,
-        )
+            }
+            try:
+                with open(session_root / "session_meta.json", 'w') as f:
+                    json.dump(session_meta, f, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to write session_meta.json: {e}")
 
-        editor = AgenticEditor(
-            scratch_dir=session_root,
-            config=self.evo_config.agentic,
-            runner=(
-                run_gemini_task if selected_backend == "gemini"
-                else run_claude_task if selected_backend == "claude"
-                else run_shinka_task if selected_backend == "shinka"
-                else run_jules_task if selected_backend == "jules"
-                else run_codex_task
-            ),
-        )
+            helper_files = sorted(base_files.keys())
 
-        try:
-            agent_result = editor.run_session(context)
-        except (CodexExecutionError, GeminiExecutionError, ClaudeExecutionError, ShinkaExecutionError, JulesExecutionError) as exc:
-            return failure_meta(str(exc))
-
-        generation_dir = Path(self.results_dir) / f"{FOLDER_PREFIX}_{generation}"
-        if generation_dir.exists():
-            shutil.rmtree(generation_dir)
-        generation_dir.mkdir(parents=True, exist_ok=True)
-        self._hydrate_generation_directory(parent_program, generation_dir)
-
-        patch_dir = str(generation_dir)
-        # Apply all changes from the agentic session into the new generation workspace.
-        for rel_path, content in agent_result.changed_files.items():
-            target = generation_dir / rel_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-
-        for rel_path, b64_content in agent_result.binary_changed_files.items():
-            target = generation_dir / rel_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(base64.b64decode(b64_content))
-
-        num_applied = (
-            1
-            if agent_result.changed_files or agent_result.binary_changed_files
-            else 0
-        )
-        patch_txt = None
-        patch_path = None
-
-        if num_applied == 0:
-            return failure_meta(
-                "Agentic edit produced no changes.",
-                session_log=agent_result.session_log,
-                commands=agent_result.commands_run,
-                metrics=agent_result.metrics,
-                session_log_path=agent_result.session_log_path,
-                session_events=agent_result.session_events,
-                agent_prompt=patch_msg,
-                binary_changed_files=agent_result.binary_changed_files,
-                changed_files=agent_result.changed_files,
-                session_id=agent_result.session_id,
-            )
-
-        # Snapshot entire agent workspace for auditing/debugging.
-        snapshot_dir: Optional[Path] = None
-        if session_root.exists():
-            snapshot_dir = generation_dir / "workspace_snapshot"
-            if snapshot_dir.exists():
-                shutil.rmtree(snapshot_dir)
-            self._fast_copy_workspace_tree(
-                session_root,
-                snapshot_dir,
-                dirs_exist_ok=True,
-            )
-            # Clean up temp scratch directory if it was created outside results_dir
-            if self.evo_config.agentic.scratch_dir_base:
-                shutil.rmtree(session_root, ignore_errors=True)
-
-        diff_summary: Dict[str, Any] = {}
-
-        api_cost = (
-            agent_result.metrics.get("total_cost")
-            or agent_result.metrics.get("estimated_total_cost")
-            or agent_result.metrics.get("estimated_total_tokens", 0.0)
-        )
-
-        meta_edit_data = {
-            "patch_type": "agentic",
-            "api_costs": api_cost,
-            "num_applied": num_applied,
-            "patch_name": None,
-            "patch_description": None,
-            "error_attempt": None,
-            "novelty_attempt": novelty_attempt,
-            "resample_attempt": resample_attempt,
-            "patch_attempt": 1,
-            "agent_session_path": str(session_root),
-            "agent_final_message": agent_result.final_message,
-            "agent_session_log": agent_result.session_log,
-            "agent_commands": [asdict(cmd) for cmd in agent_result.commands_run],
-            "agent_metrics": agent_result.metrics,
-            "agent_session_log_path": (
-                str(agent_result.session_log_path)
-                if agent_result.session_log_path
-                else None
-            ),
-            "agent_session_events": agent_result.session_events,
-            "agent_prompt": patch_msg,
-            "agent_workspace_snapshot": (
-                str(snapshot_dir) if snapshot_dir else None
-            ),
-            "agent_binary_files": {
-                str(path): content
-                for path, content in agent_result.binary_changed_files.items()
-            },
-            "agent_changed_files": _serialize_changed_files(
-                agent_result.changed_files
-            ),
-            "agent_code_diffs": _build_code_diffs(agent_result.changed_files),
-            "agent_primary_file": None,
-            "diff_summary": diff_summary,
-            "model_name": _agent_model_name(selected_backend, agent_result.model),
-            "agent_backend": selected_backend,
-            "agent_backend_type": _agent_backend_type(selected_backend),
-            "agent_session_id": agent_result.session_id,
-            "agent_resumed_from_parent": resumed_from_parent,
-            "agent_resume_source_session_id": resume_session_id,
-            "bandit_posteriors": (
-                bandit_summary_override
-                if bandit_summary_override is not None
-                else (
-                    self.backend_bandit.get_summary()
-                    if self.backend_bandit
-                    else None
+            system_prompt = patch_sys.strip()
+            if helper_files:
+                max_helpers = 50
+                listed_helpers = helper_files[:max_helpers]
+                helper_listing = "\n".join(
+                    f"- {path.as_posix()}" for path in listed_helpers
                 )
-            ),
-        }
+                if len(helper_files) > max_helpers:
+                    helper_listing += (
+                        f"\n- ... and {len(helper_files) - max_helpers} more files"
+                    )
+                system_prompt += (
+                    "\n\n# Workspace Files\n"
+                    "The following files were copied from the parent workspace; "
+                    "edit any that your improvement touches so evaluation can run without manual fixes:\n"
+                    f"{helper_listing}"
+                    "\n\nWhen workspace files are available you are expected to update at least one of them whenever your idea relies on shared utilities. "
+                    "If you believe no helper change is required, record that decision with a short comment inside the most relevant file so the run is not discarded."
+                )
 
-        return patch_txt, meta_edit_data, num_applied
+            context = AgentContext(
+                user_prompt=patch_msg.strip(),
+                system_prompt=system_prompt,
+                language=self.evo_config.language,
+                base_files=base_files,
+                primary_file=primary_filename,
+                metadata={
+                    "generation": generation,
+                    "novelty_attempt": novelty_attempt,
+                    "resample_attempt": resample_attempt,
+                    "patch_type": patch_type,
+                    "results_dir": str(self.results_dir),
+                },
+                resume_session_id=resume_session_id,
+            )
+
+            editor = AgenticEditor(
+                scratch_dir=session_root,
+                config=self.evo_config.agentic,
+                runner=(
+                    run_gemini_task if selected_backend == "gemini"
+                    else run_claude_task if selected_backend == "claude"
+                    else run_shinka_task if selected_backend == "shinka"
+                    else run_jules_task if selected_backend == "jules"
+                    else run_codex_task
+                ),
+            )
+
+            try:
+                agent_result = editor.run_session(context)
+            except (CodexExecutionError, GeminiExecutionError, ClaudeExecutionError, ShinkaExecutionError, JulesExecutionError) as exc:
+                return failure_meta(str(exc))
+
+            generation_dir = Path(self.results_dir) / f"{FOLDER_PREFIX}_{generation}"
+            if generation_dir.exists():
+                shutil.rmtree(generation_dir)
+            generation_dir.mkdir(parents=True, exist_ok=True)
+            self._hydrate_generation_directory(parent_program, generation_dir)
+
+            patch_dir = str(generation_dir)
+            # Apply all changes from the agentic session into the new generation workspace.
+            for rel_path, content in agent_result.changed_files.items():
+                target = generation_dir / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+
+            for rel_path, b64_content in agent_result.binary_changed_files.items():
+                target = generation_dir / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(base64.b64decode(b64_content))
+
+            num_applied = (
+                1
+                if agent_result.changed_files or agent_result.binary_changed_files
+                else 0
+            )
+            patch_txt = None
+            patch_path = None
+
+            if num_applied == 0:
+                return failure_meta(
+                    "Agentic edit produced no changes.",
+                    session_log=agent_result.session_log,
+                    commands=agent_result.commands_run,
+                    metrics=agent_result.metrics,
+                    session_log_path=agent_result.session_log_path,
+                    session_events=agent_result.session_events,
+                    agent_prompt=patch_msg,
+                    binary_changed_files=agent_result.binary_changed_files,
+                    changed_files=agent_result.changed_files,
+                    session_id=agent_result.session_id,
+                )
+
+            # Snapshot entire agent workspace for auditing/debugging.
+            snapshot_dir: Optional[Path] = None
+            if session_root.exists():
+                snapshot_dir = generation_dir / "workspace_snapshot"
+                if snapshot_dir.exists():
+                    shutil.rmtree(snapshot_dir)
+                self._fast_copy_workspace_tree(
+                    session_root,
+                    snapshot_dir,
+                    dirs_exist_ok=True,
+                )
+
+            diff_summary: Dict[str, Any] = {}
+
+            api_cost = (
+                agent_result.metrics.get("total_cost")
+                or agent_result.metrics.get("estimated_total_cost")
+                or agent_result.metrics.get("estimated_total_tokens", 0.0)
+            )
+
+            meta_edit_data = {
+                "patch_type": "agentic",
+                "api_costs": api_cost,
+                "num_applied": num_applied,
+                "patch_name": None,
+                "patch_description": None,
+                "error_attempt": None,
+                "novelty_attempt": novelty_attempt,
+                "resample_attempt": resample_attempt,
+                "patch_attempt": 1,
+                "agent_session_path": str(session_root),
+                "agent_final_message": agent_result.final_message,
+                "agent_session_log": agent_result.session_log,
+                "agent_commands": [asdict(cmd) for cmd in agent_result.commands_run],
+                "agent_metrics": agent_result.metrics,
+                "agent_session_log_path": (
+                    str(agent_result.session_log_path)
+                    if agent_result.session_log_path
+                    else None
+                ),
+                "agent_session_events": agent_result.session_events,
+                "agent_prompt": patch_msg,
+                "agent_workspace_snapshot": (
+                    str(snapshot_dir) if snapshot_dir else None
+                ),
+                "agent_binary_files": {
+                    str(path): content
+                    for path, content in agent_result.binary_changed_files.items()
+                },
+                "agent_changed_files": _serialize_changed_files(
+                    agent_result.changed_files
+                ),
+                "agent_code_diffs": _build_code_diffs(agent_result.changed_files),
+                "agent_primary_file": None,
+                "diff_summary": diff_summary,
+                "model_name": _agent_model_name(selected_backend, agent_result.model),
+                "agent_backend": selected_backend,
+                "agent_backend_type": _agent_backend_type(selected_backend),
+                "agent_session_id": agent_result.session_id,
+                "agent_resumed_from_parent": resumed_from_parent,
+                "agent_resume_source_session_id": resume_session_id,
+                "bandit_posteriors": (
+                    bandit_summary_override
+                    if bandit_summary_override is not None
+                    else (
+                        self.backend_bandit.get_summary()
+                        if self.backend_bandit
+                        else None
+                    )
+                ),
+            }
+
+            return patch_txt, meta_edit_data, num_applied
+        finally:
+            # Clean up scratch directory if it was created outside results_dir
+            if self.evo_config.agentic.scratch_dir_base and session_root.exists():
+                try:
+                    shutil.rmtree(session_root, ignore_errors=True)
+                    self._unregister_scratch_dir(session_root)
+                except Exception:
+                    pass
 
     def _build_embedding_corpus(
         self, generation_dir: Path, meta_patch_data: Optional[dict]
@@ -3627,6 +3924,59 @@ class EvolutionRunner:
         except Exception as e:
             logger.warning(f"Unexpected error committing workspace: {e}")
             return None
+
+    def _git_commit_generation(
+        self,
+        generation_dir: Path,
+        generation: int,
+        node_uuid: str,
+        parent_sha: str,
+        message: Optional[str] = None,
+    ) -> Optional[str]:
+        """Create a git commit in evolution.git for the generation directory.
+
+        Uses EvolutionGitManager's mutation_context to create a commit with
+        proper worktree lifecycle management and file locking.
+
+        Args:
+            generation_dir: Path to the generation's workspace directory
+            generation: The generation number
+            node_uuid: The program ID (used as node UUID in git refs)
+            parent_sha: The parent commit's SHA (from parent program)
+            message: Optional commit message (defaults to "Generation {N}")
+
+        Returns:
+            Commit SHA if successful, None if git_manager is not available or on error
+        """
+        if self.git_manager is None:
+            return None
+
+        try:
+            with self.git_manager.mutation_context(parent_sha, node_uuid) as worktree:
+                # Copy generation_dir contents to worktree
+                for file_path in generation_dir.rglob("*"):
+                    if not file_path.is_file():
+                        continue
+                    rel_path = file_path.relative_to(generation_dir)
+                    # Skip results directories and other non-source files
+                    rel_str = str(rel_path)
+                    if rel_str.startswith("results") or rel_str.startswith("."):
+                        continue
+                    target = worktree.path / rel_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(file_path, target)
+
+                # Commit changes
+                commit_sha = self.git_manager.commit_mutation(
+                    worktree,
+                    message or f"Generation {generation}",
+                    node_uuid,
+                )
+                logger.info(f"Git commit for gen {generation}: {commit_sha[:8]}")
+                return commit_sha
+        except Exception as e:
+            logger.warning(f"Failed to create git commit for gen {generation}: {e}")
+            return None  # Fallback to blob-only storage
 
     def _run_agentic_evaluation(
         self,

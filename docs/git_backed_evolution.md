@@ -73,6 +73,19 @@ From the WebUI:
 
 ## How It Works
 
+### Integration Architecture
+
+When `git_backed_storage=true`, the evolution runner:
+
+1. **Generation 0 (Seed)**: Calls `EvolutionGitManager.init_from_workspace()` to create the initial commit
+2. **Subsequent Generations**: Calls `_git_commit_generation()` in `_finalize_job()` to commit each mutation
+3. **Metadata Storage**: Stores `git_commit_sha` in each program's metadata for reference
+4. **Lock Ordering**: Git operations complete before database writes to ensure consistency
+
+This hybrid approach maintains both:
+- **SQLite**: Stores metadata, scores, embeddings (fast querying)
+- **evolution.git**: Stores actual code as git commits (full history)
+
 ### Repository Structure
 
 When git-backed storage is enabled, ShinkaEvolve creates:
@@ -240,6 +253,23 @@ If you see this error when accessing a git-backed program:
 2. Verify the commit SHA is in the program's metadata
 3. Check that the `EvolutionGitManager` is passed to `get_code_content()`
 
+### "No git storage found" Error in WebUI
+
+The WebUI supports two git storage modes:
+- **evolution.git**: New git-backed runs with `git_backed_storage=true`
+- **workspace/.git**: Legacy runs that committed to an isolated workspace
+
+If neither exists, git features (provision worktree, export) won't be available. Check:
+1. Was `git_backed_storage=true` set during the run?
+2. For legacy runs, was workspace isolation enabled?
+
+### Git Commit Failed During Evolution
+
+If you see warnings like "Failed to create git commit for gen N":
+- The evolution continues normally (graceful degradation to blob-only)
+- Check disk space and permissions on the results directory
+- Verify git is installed and accessible
+
 ### Worktree Creation Fails on Windows
 
 On Windows without Developer Mode:
@@ -253,6 +283,13 @@ For very large evolutions (1000+ nodes):
 - Export may take several minutes
 - Consider using `git gc` on the exported repo to optimize
 - The bare repo uses refs efficiently and shouldn't grow excessively
+
+### Parent Commit Not Found
+
+If mutations fail to find parent commits:
+- Verify generation 0 completed successfully
+- Check `_initial_git_sha` was set in the runner
+- Parent program's metadata should have `git_commit_sha`
 
 ## See Also
 
