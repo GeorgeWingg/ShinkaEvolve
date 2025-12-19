@@ -106,11 +106,23 @@ def run_gemini_task(
 
     cmd = [str(binary), "--output-format", "stream-json"]
 
-    # Track model name for cost calculation
-    model_name = profile or "gemini-2.5-flash"  # Default Gemini model
+    # Load model selection from selected_profiles.json if not explicitly provided
+    selected_model = None
+    try:
+        from shinka.webui.cli_profiles import get_selected_profiles_manager
+        selected_mgr = get_selected_profiles_manager()
+        selection = selected_mgr.get_selected("gemini")
+        selected_model = selection.get("model")
+        logger.debug(f"Gemini selected profile: model={selected_model}")
+    except Exception as e:
+        logger.debug(f"Could not load Gemini selected profile: {e}")
 
-    if profile:
-        cmd.extend(["--model", profile])
+    # Model selection: explicit profile param > selected_profiles.json model > default
+    model_to_use = profile or selected_model
+    model_name = model_to_use or "gemini-2.5-flash"  # Track for cost calculation
+
+    if model_to_use:
+        cmd.extend(["--model", model_to_use])
 
     if sandbox and str(sandbox).strip():
         cmd.append("--sandbox")
@@ -288,19 +300,21 @@ def run_gemini_task(
                     stdout_capture = None
                     stderr_capture = None
 
-            process = subprocess.Popen(
-                cmd_with_prompt,
-                stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=cwd,
-                env=env,
-            )
-
-            # Close our handle to the file; Popen has its own
-            if prompt_file_handle:
-                prompt_file_handle.close()
+            try:
+                process = subprocess.Popen(
+                    cmd_with_prompt,
+                    stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=cwd,
+                    env=env,
+                )
+            finally:
+                # Close our handle to the file; Popen has its own (or we failed and must cleanup)
+                if prompt_file_handle:
+                    prompt_file_handle.close()
+                    prompt_file_handle = None
 
             lines = full_prompt.strip().splitlines() if full_prompt else []
             prompt_preview = lines[0][:160] if lines else ""
@@ -331,6 +345,19 @@ def run_gemini_task(
                     line = process.stdout.readline()
                     if not line:
                         if process.poll() is not None:
+                            # Check exit code before returning
+                            exit_code = process.returncode
+                            if exit_code != 0:
+                                stderr_content = ""
+                                try:
+                                    if process.stderr:
+                                        stderr_content = process.stderr.read()
+                                except Exception:
+                                    pass
+                                raise GeminiExecutionError(
+                                    f"Gemini process exited with code {exit_code}. "
+                                    f"Stderr: {stderr_content[:500] if stderr_content else 'N/A'}"
+                                )
                             # Prefer real token counts from result event (Gemini CLI v0.11+)
                             # Fall back to character-based estimation for older versions
                             final_input = real_input_tokens if real_input_tokens is not None else estimated_input_tokens

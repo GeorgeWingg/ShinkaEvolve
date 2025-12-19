@@ -163,32 +163,37 @@ class EnsembleEvaluator:
         try:
             from shinka.edit.codex_cli import run_codex_task
             runners["codex"] = run_codex_task
-        except ImportError:
-            pass
+            logger.info("Codex backend available")
+        except ImportError as e:
+            logger.warning(f"Codex backend unavailable: {e}")
 
         try:
             from shinka.edit.gemini_cli import run_gemini_task
             runners["gemini"] = run_gemini_task
-        except ImportError:
-            pass
+            logger.info("Gemini backend available")
+        except ImportError as e:
+            logger.warning(f"Gemini backend unavailable: {e}")
 
         try:
             from shinka.edit.claude_cli import run_claude_task
             runners["claude"] = run_claude_task
-        except ImportError:
-            pass
+            logger.info("Claude backend available")
+        except ImportError as e:
+            logger.warning(f"Claude backend unavailable: {e}")
 
         try:
             from shinka.edit.shinka_agent import run_shinka_task
             runners["shinka"] = run_shinka_task
-        except ImportError:
-            pass
+            logger.info("Shinka backend available")
+        except ImportError as e:
+            logger.warning(f"Shinka backend unavailable: {e}")
 
         try:
             from shinka.edit.jules_cli import run_jules_task
             runners["jules"] = run_jules_task
-        except ImportError:
-            pass
+            logger.info("Jules backend available")
+        except ImportError as e:
+            logger.warning(f"Jules backend unavailable: {e}")
 
         return runners
 
@@ -378,7 +383,7 @@ class EnsembleEvaluator:
 
         except Exception as e:
             elapsed = time.monotonic() - start_time
-            logger.error(f"Evaluator '{evaluator_id}' failed: {e}")
+            logger.error(f"Evaluator '{evaluator_id}' failed: {e}", exc_info=True)
 
             return SingleEvaluatorResult(
                 evaluator_id=evaluator_id,
@@ -487,7 +492,7 @@ class EnsembleEvaluator:
                         f"score={result.combined_score:.4f}, correct={result.correct}"
                     )
                 except Exception as e:
-                    logger.error(f"Evaluator '{spec.name}' future failed: {e}")
+                    logger.error(f"Evaluator '{spec.name}' future failed: {e}", exc_info=True)
                     # Create error result
                     evaluator_results.append(SingleEvaluatorResult(
                         evaluator_id=spec.name,

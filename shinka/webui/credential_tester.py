@@ -34,12 +34,7 @@ class CredentialTester:
         elif provider == "openrouter":
             return self._test_openrouter(api_key)
         elif provider == "jules":
-            # Jules requires complex auth (GitHub token + Jules key), 
-            # simple key test might not be sufficient or standardized yet.
-            # For now, just check format.
-            if api_key.startswith("jules-"):
-                 return {"ok": True, "message": "Jules key format valid (Live test not implemented)"}
-            return {"ok": False, "message": "Invalid Jules key format"}
+            return self._test_jules(api_key)
         elif provider == "github":
              return self._test_github(api_key)
              
@@ -128,6 +123,34 @@ class CredentialTester:
                  return {"ok": False, "message": f"OpenRouter Error: {response.status_code}"}
         except Exception as e:
              return {"ok": False, "message": f"Connection failed: {str(e)}"}
+
+    def _test_jules(self, api_key: str) -> Dict:
+        try:
+            # Jules API uses X-Goog-Api-Key header
+            # Test by listing sources (requires minimal permissions)
+            headers = {"X-Goog-Api-Key": api_key}
+            response = requests.get(
+                "https://jules.googleapis.com/v1alpha/sources",
+                headers=headers,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                return {"ok": True, "message": "Connection successful (Jules)"}
+            elif response.status_code == 401 or response.status_code == 403:
+                try:
+                    err = response.json().get("error", {}).get("message", response.text)
+                except (json.JSONDecodeError, ValueError, KeyError, AttributeError):
+                    err = response.text
+                return {"ok": False, "message": f"Jules Auth Error: {err}"}
+            else:
+                try:
+                    err = response.json().get("error", {}).get("message", response.text)
+                except (json.JSONDecodeError, ValueError, KeyError, AttributeError):
+                    err = response.text
+                return {"ok": False, "message": f"Jules Error ({response.status_code}): {err}"}
+        except Exception as e:
+            return {"ok": False, "message": f"Connection failed: {str(e)}"}
 
     def _test_github(self, token: str) -> Dict:
         try:

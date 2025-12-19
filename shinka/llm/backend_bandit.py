@@ -18,6 +18,62 @@ from shinka.tools.auth_status import get_authenticated_backends, ALL_BACKENDS
 BACKEND_ARMS = ALL_BACKENDS
 
 
+def _safe_normalize_probabilities(probs: np.ndarray) -> np.ndarray:
+    """Safely normalize probabilities, handling edge cases.
+
+    Handles:
+    - Zero sum
+    - NaN values
+    - Inf values
+    - Negative values
+    - Very small sums that would cause overflow
+
+    Returns uniform distribution if normalization fails.
+
+    Args:
+        probs: Array of probability values (may be unnormalized)
+
+    Returns:
+        Normalized probability array that sums to 1.0
+    """
+    n = len(probs)
+    if n == 0:
+        return probs  # Empty array case
+
+    uniform = np.ones(n, dtype=np.float64) / n
+
+    # Check for NaN or Inf - fall back to uniform
+    if not np.all(np.isfinite(probs)):
+        return uniform
+
+    # Clip negative values to 0
+    probs = np.clip(probs, 0.0, None)
+
+    total = probs.sum()
+
+    # Check if total is valid for division
+    if total <= 0.0 or not np.isfinite(total):
+        return uniform
+
+    # Normalize
+    normalized = probs / total
+
+    # Post-normalization safety: ensure result is valid
+    # This catches edge cases like total being very small (producing Inf)
+    if not np.all(np.isfinite(normalized)):
+        return uniform
+
+    # Ensure exactly sums to 1.0 (floating point can drift slightly)
+    # Re-normalize after any adjustments
+    final_sum = normalized.sum()
+    if final_sum > 0 and np.isfinite(final_sum):
+        normalized = normalized / final_sum
+    else:
+        return uniform
+
+    return normalized
+
+
 class NoAuthenticatedBackendsError(Exception):
     """Raised when no backends are authenticated."""
     pass
@@ -85,13 +141,16 @@ class BackendBandit:
         self._allowed_backends: Optional[List[str]] = allowed_backends
         self._n_arms = len(ALL_BACKENDS)
     
-    def refresh_auth(self) -> List[str]:
+    def refresh_auth(self, *, skip_cache: bool = False) -> List[str]:
         """Refresh cached auth status.
-        
+
+        Args:
+            skip_cache: If True, bypass auth status cache and check fresh.
+
         Returns:
             List of authenticated backend names (filtered by allowed_backends if set)
         """
-        all_authenticated = get_authenticated_backends()
+        all_authenticated = get_authenticated_backends(skip_cache=skip_cache)
         # Filter by allowed_backends if configured
         if self._allowed_backends:
             self._cached_auth = [b for b in all_authenticated if b in self._allowed_backends]
@@ -131,9 +190,9 @@ class BackendBandit:
         available_indices = [ALL_BACKENDS.index(b) for b in available]
         posteriors = np.array([full_posteriors[i] for i in available_indices])
         
-        # Normalize to ensure sum = 1
-        posteriors = posteriors / posteriors.sum() if posteriors.sum() > 0 else np.ones(len(available)) / len(available)
-        
+        # Safely normalize probabilities (handles NaN, Inf, zero sum, etc.)
+        posteriors = _safe_normalize_probabilities(posteriors)
+
         # Sample according to posteriors
         idx = np.random.choice(len(available), p=posteriors)
         return available[idx]
@@ -177,6 +236,47 @@ class BackendBandit:
         
         return posteriors
     
+    def sample_with_fallback(self, exclude: Optional[List[str]] = None) -> str:
+        """Sample a backend, excluding specified ones (for fallback after failures).
+
+        This is used when a backend was initially selected but became unavailable.
+        It samples from remaining authenticated backends.
+
+        Args:
+            exclude: List of backend names to exclude from selection
+
+        Returns:
+            Backend name from available backends not in exclude list
+
+        Raises:
+            NoAuthenticatedBackendsError: If no alternative backends are available
+        """
+        # Refresh auth to get latest available backends
+        available = self.refresh_auth(skip_cache=True)
+
+        # Filter out excluded backends
+        if exclude:
+            available = [b for b in available if b not in exclude]
+
+        if not available:
+            excluded_str = ", ".join(exclude) if exclude else "none"
+            raise NoAuthenticatedBackendsError(
+                f"No alternative backends available after excluding: {excluded_str}. "
+                "All authenticated backends have been tried."
+            )
+
+        # Get posteriors for available backends and sample
+        full_posteriors = self._bandit.posterior(subset=available)
+        available_indices = [ALL_BACKENDS.index(b) for b in available]
+        posteriors = np.array([full_posteriors[i] for i in available_indices])
+
+        # Safely normalize probabilities (handles NaN, Inf, zero sum, etc.)
+        posteriors = _safe_normalize_probabilities(posteriors)
+
+        # Sample
+        idx = np.random.choice(len(available), p=posteriors)
+        return available[idx]
+
     def decay(self) -> None:
         """Apply decay to exploration parameters."""
         if hasattr(self._bandit, 'auto_decay') and self._bandit.auto_decay:

@@ -3,13 +3,28 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:
+    from filelock import FileLock
+except ImportError:
+    FileLock = None  # type: ignore
+
+logger = logging.getLogger(__name__)
+
 REGISTRY_DIR = Path.home() / ".codex" / "shinka_sessions"
+LOCK_TIMEOUT = 30  # seconds
+
+
+class LockAcquisitionError(Exception):
+    """Raised when file lock acquisition fails and raise_on_failure is True."""
+
+    pass
 
 
 def _ensure_registry_dir() -> None:
@@ -19,6 +34,62 @@ def _ensure_registry_dir() -> None:
 def _entry_path(key: str | int) -> Path:
     _ensure_registry_dir()
     return REGISTRY_DIR / f"{key}.json"
+
+
+def _get_lock_path(key: str | int) -> Path:
+    """Return path for the lock file associated with a registry entry.
+
+    Lock files are hidden (prefixed with .) to avoid being picked up by glob.
+    """
+    _ensure_registry_dir()
+    return REGISTRY_DIR / f".{key}.json.lock"
+
+
+class _LockContext:
+    """Context manager for file locking with explicit failure handling.
+
+    Args:
+        key: The registry key to lock.
+        raise_on_failure: If True, raise LockAcquisitionError when lock fails.
+                         If False (default for backwards compat), log warning and continue.
+    """
+
+    def __init__(self, key: str | int, raise_on_failure: bool = False):
+        self.key = key
+        self.lock = None
+        self.lock_acquired = False
+        self.raise_on_failure = raise_on_failure
+        if FileLock is not None:
+            self.lock = FileLock(str(_get_lock_path(key)), timeout=LOCK_TIMEOUT)
+
+    def __enter__(self):
+        if self.lock is not None:
+            try:
+                self.lock.acquire()
+                self.lock_acquired = True
+            except Exception as e:
+                logger.warning(f"Failed to acquire lock for {self.key}: {e}")
+                if self.raise_on_failure:
+                    raise LockAcquisitionError(
+                        f"Cannot acquire lock for {self.key}: {e}"
+                    ) from e
+        elif self.raise_on_failure:
+            # FileLock not available but caller requires locking
+            logger.warning("FileLock not available, proceeding without lock")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.lock is not None and self.lock_acquired:
+            try:
+                self.lock.release()
+            except Exception:
+                pass  # Lock may not be held
+        return False
+
+    @property
+    def is_locked(self) -> bool:
+        """Check if lock was successfully acquired."""
+        return self.lock_acquired
 
 
 def register_session_process(
@@ -34,14 +105,14 @@ def register_session_process(
     filename_key: Optional[str] = None,
 ) -> None:
     """Persist minimal metadata about a newly spawned Codex CLI process.
-    
+
     Args:
         pid: The OS process ID to check for liveness.
         results_dir: The run's results directory (for matching sessions to runs).
         filename_key: Optional unique string for the filename. Defaults to str(pid).
                       Use this if multiple sessions might share the same PID (e.g. threads).
     """
-
+    key = filename_key if filename_key else pid
     entry = {
         "pid": pid,
         "prompt_preview": prompt_preview.strip(),
@@ -55,36 +126,50 @@ def register_session_process(
         "patch_type": patch_type,
         "results_dir": results_dir,
     }
-    
-    key = filename_key if filename_key else pid
-    _entry_path(key).write_text(json.dumps(entry), encoding="utf-8")
+
+    with _LockContext(key):
+        _entry_path(key).write_text(json.dumps(entry), encoding="utf-8")
 
 
 def update_session_process(pid: int, filename_key: Optional[str] = None, **updates: Any) -> None:
     """Merge updates into an existing registry entry.
-    
+
+    Uses file locking to prevent TOCTOU race conditions when multiple
+    parallel workers update the same session concurrently.
+
     Args:
         pid: Legacy argument, used as key if filename_key is None.
         filename_key: The specific file key to update.
     """
     key = filename_key if filename_key else pid
     path = _entry_path(key)
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        data = {}
-    data.update(updates)
-    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with _LockContext(key):
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = {}
+        data.update(updates)
+        path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def remove_session_process(pid: int, filename_key: Optional[str] = None) -> None:
     """Remove an entry once the Codex process exits."""
     key = filename_key if filename_key else pid
     path = _entry_path(key)
-    if path.exists():
-        path.unlink(missing_ok=True)
+
+    with _LockContext(key):
+        if path.exists():
+            path.unlink(missing_ok=True)
+        # Also clean up the lock file
+        lock_path = _get_lock_path(key)
+        if lock_path.exists():
+            try:
+                lock_path.unlink(missing_ok=True)
+            except Exception:
+                pass  # Lock file may be held by another process
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -102,44 +187,61 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def list_session_processes() -> List[Dict[str, Any]]:
-    """Return sanitized entries for still-running Codex processes."""
+    """Return sanitized entries for still-running Codex processes.
 
+    Uses per-file locking to prevent races with concurrent updates/deletes.
+    """
     entries: List[Dict[str, Any]] = []
     if not REGISTRY_DIR.exists():
         return entries
 
     for json_file in REGISTRY_DIR.glob("*.json"):
-        try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            json_file.unlink(missing_ok=True)
-            continue
+        # Extract key from filename (e.g., "12345.json" -> "12345")
+        key = json_file.stem
 
-        pid = data.get("pid")
-        if not isinstance(pid, int):
-            json_file.unlink(missing_ok=True)
-            continue
+        with _LockContext(key):
+            # Re-check existence after acquiring lock
+            if not json_file.exists():
+                continue
 
-        if not _is_pid_alive(pid):
-            json_file.unlink(missing_ok=True)
-            continue
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                json_file.unlink(missing_ok=True)
+                continue
 
-        entries.append(
-            {
-                "pid": pid,
-                "session_id": data.get("session_id"),
-                "prompt_preview": data.get("prompt_preview"),
-                "workdir": data.get("workdir"),
-                "started_at": data.get("started_at"),
-                "session_kind": data.get("session_kind"),
-                "status": data.get("status", "running"),
-                "parent_id": data.get("parent_id"),
-                "generation": data.get("generation"),
-                "patch_type": data.get("patch_type"),
-                "results_dir": data.get("results_dir"),
-                "can_stop": True,
-            }
-        )
+            pid = data.get("pid")
+            if not isinstance(pid, int):
+                json_file.unlink(missing_ok=True)
+                continue
+
+            if not _is_pid_alive(pid):
+                json_file.unlink(missing_ok=True)
+                # Clean up lock file too
+                lock_path = _get_lock_path(key)
+                if lock_path.exists():
+                    try:
+                        lock_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                continue
+
+            entries.append(
+                {
+                    "pid": pid,
+                    "session_id": data.get("session_id"),
+                    "prompt_preview": data.get("prompt_preview"),
+                    "workdir": data.get("workdir"),
+                    "started_at": data.get("started_at"),
+                    "session_kind": data.get("session_kind"),
+                    "status": data.get("status", "running"),
+                    "parent_id": data.get("parent_id"),
+                    "generation": data.get("generation"),
+                    "patch_type": data.get("patch_type"),
+                    "results_dir": data.get("results_dir"),
+                    "can_stop": True,
+                }
+            )
     return entries
 
 

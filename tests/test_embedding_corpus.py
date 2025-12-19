@@ -104,11 +104,11 @@ def test_novelty_llm_receives_corpus_text(monkeypatch):
             self.island_manager = FakeIslandManager()
 
         @staticmethod
-        def compute_similarity(_, __):
+        def compute_similarity(_, __, exclude_program_id=None):
             return [1.5]  # force LLM path
 
         @staticmethod
-        def get_most_similar_program(_, __):
+        def get_most_similar_program(_, __, exclude_program_id=None):
             return Program(id="p", code="OLD", language="python")
 
     judge = NoveltyJudge(novelty_llm_client=DummyLLM(), language="python", similarity_threshold=0.5)

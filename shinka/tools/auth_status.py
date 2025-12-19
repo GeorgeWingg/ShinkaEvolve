@@ -425,14 +425,22 @@ def check_jules_auth() -> BackendAuthStatus:
         )
 
 
-def check_openrouter_auth() -> BackendAuthStatus:
+def check_openrouter_auth(*, skip_cache: bool = False) -> BackendAuthStatus:
     """Check if OpenRouter API key is configured.
 
     OpenRouter is available if OPENROUTER_API_KEY is set.
 
+    Args:
+        skip_cache: If True, bypass the cache and check fresh status.
+
     Returns:
         BackendAuthStatus with availability info
     """
+    if not skip_cache:
+        cached = _get_cached_status("openrouter")
+        if cached:
+            return cached
+
     api_key = os.environ.get("OPENROUTER_API_KEY")
 
     # Best-effort fallback: unified credential store
@@ -448,20 +456,20 @@ def check_openrouter_auth() -> BackendAuthStatus:
             pass
 
     if not api_key:
-        return BackendAuthStatus(
+        return _cache_status(BackendAuthStatus(
             backend="openrouter",
             available=False,
             error="OPENROUTER_API_KEY not set.",
-        )
+        ))
 
-    return BackendAuthStatus(
+    return _cache_status(BackendAuthStatus(
         backend="openrouter",
         available=True,
         plan="API Key",
-    )
+    ))
 
 
-def check_backend_auth(backend: str) -> BackendAuthStatus:
+def check_backend_auth(backend: str, *, skip_cache: bool = False) -> BackendAuthStatus:
     """Check auth status for a specific backend.
 
     Args:
@@ -488,33 +496,41 @@ def check_backend_auth(backend: str) -> BackendAuthStatus:
     return checkers[backend]()
 
 
-def get_all_backend_statuses() -> List[BackendAuthStatus]:
+def get_all_backend_statuses(*, skip_cache: bool = False) -> List[BackendAuthStatus]:
     """Get auth status for all backends.
+
+    Args:
+        skip_cache: If True, bypass cache and check fresh status.
 
     Returns:
         List of BackendAuthStatus, one per backend
     """
+    # Note: Only openrouter currently supports skip_cache directly.
+    # Others will still use their normal caching behavior.
     return [
         check_codex_auth(),
         check_gemini_auth(),
         check_claude_auth(),
         check_shinka_auth(),
         check_jules_auth(),
-        check_openrouter_auth(),
+        check_openrouter_auth(skip_cache=skip_cache),
     ]
 
 
-def get_authenticated_backends() -> List[str]:
+def get_authenticated_backends(*, skip_cache: bool = False) -> List[str]:
     """Return list of backend names that are currently authenticated.
-    
+
     This is the main entry point for BackendBandit to determine which
     backends to include in the selection pool.
-    
+
+    Args:
+        skip_cache: If True, bypass cache and check fresh status.
+
     Returns:
         List of backend names (e.g., ['codex', 'shinka'])
     """
     available = []
-    for status in get_all_backend_statuses():
+    for status in get_all_backend_statuses(skip_cache=skip_cache):
         if status.available:
             available.append(status.backend)
     return available

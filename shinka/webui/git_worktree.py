@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,6 +20,33 @@ except ImportError:
     FileLock = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# Security validation patterns
+SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+NODE_ID_PATTERN = re.compile(r"^[0-9a-zA-Z_-]{1,64}$")
+BRANCH_PATTERN = re.compile(r"^[a-zA-Z0-9._/-]+$")
+
+
+def _validate_git_sha(sha: str) -> bool:
+    """Validate that sha is a valid 40-character hexadecimal git SHA."""
+    return bool(SHA_PATTERN.match(sha.lower()))
+
+
+def _validate_node_id(node_id: str) -> bool:
+    """Validate node identifier (UUID or simple alphanumeric ID like 'node-001')."""
+    if not node_id or len(node_id) > 64:
+        return False
+    return bool(NODE_ID_PATTERN.match(node_id))
+
+
+def _validate_branch(branch: str) -> bool:
+    """Validate git branch name format."""
+    if not branch or len(branch) > 256:
+        return False
+    # Reject option injection and path traversal
+    if branch.startswith("-") or ".." in branch:
+        return False
+    return bool(BRANCH_PATTERN.match(branch))
 
 
 def is_git_repo(path: Path) -> bool:
@@ -171,7 +199,13 @@ class GitWorktreeManager:
 
         Returns:
             Path to the cached bare repository
+
+        Raises:
+            ValueError: If the branch name format is invalid
         """
+        if not _validate_branch(branch):
+            raise ValueError(f"Invalid branch name format: {branch}")
+
         cache_path = self._get_cached_repo_path(git_url)
 
         if cache_path.exists():
@@ -258,7 +292,13 @@ class GitWorktreeManager:
 
         Returns:
             WorktreeInfo with the created worktree details
+
+        Raises:
+            ValueError: If the branch name format is invalid
         """
+        if not _validate_branch(branch):
+            raise ValueError(f"Invalid branch name format: {branch}")
+
         # Ensure we have a cached clone
         cache_path = self._ensure_cached_clone(git_url, branch)
 
@@ -336,7 +376,13 @@ class GitWorktreeManager:
 
         Returns:
             WorktreeInfo with the cloned repo details
+
+        Raises:
+            ValueError: If the branch name format is invalid
         """
+        if not _validate_branch(branch):
+            raise ValueError(f"Invalid branch name format: {branch}")
+
         if workspace_name:
             # Support both absolute paths and relative names
             workspace_path = Path(workspace_name)
@@ -399,7 +445,11 @@ class GitWorktreeManager:
             del self._worktrees[path_str]
 
         if path.exists():
-            shutil.rmtree(path)
+            # Check for symlinks to prevent TOCTOU attacks
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                logger.warning(f"Skipping removal of {path}: not a directory or is symlink")
 
     def cleanup(self, max_age_hours: Optional[int] = None) -> int:
         """Remove old worktrees.
@@ -700,7 +750,13 @@ class GitWorktreeManager:
 
         Returns:
             Git diff output as string
+
+        Raises:
+            ValueError: If the SHA format is invalid
         """
+        if commit_sha and not _validate_git_sha(commit_sha):
+            raise ValueError(f"Invalid git SHA format: {commit_sha}")
+
         workspace_path = Path(workspace_path).resolve()
 
         # Get the first commit (original state)
@@ -741,7 +797,13 @@ class GitWorktreeManager:
 
         Returns:
             Path to the generated patch file
+
+        Raises:
+            ValueError: If the SHA format is invalid
         """
+        if not _validate_git_sha(commit_sha):
+            raise ValueError(f"Invalid git SHA format: {commit_sha}")
+
         workspace_path = Path(workspace_path).resolve()
         output_path = Path(output_path).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
@@ -1071,7 +1133,15 @@ class EvolutionGitManager:
         Args:
             commit_sha: The commit SHA to reference
             node_uuid: The node's UUID
+
+        Raises:
+            ValueError: If the SHA or UUID format is invalid
         """
+        if not _validate_git_sha(commit_sha):
+            raise ValueError(f"Invalid git SHA format: {commit_sha}")
+        if not _validate_node_id(node_uuid):
+            raise ValueError(f"Invalid node ID format: {node_uuid}")
+
         ref_name = f"refs/shinka/nodes/{node_uuid}"
         subprocess.run(
             ["git", "update-ref", ref_name, commit_sha],
@@ -1096,7 +1166,11 @@ class EvolutionGitManager:
 
         Raises:
             subprocess.CalledProcessError: If git operations fail
+            ValueError: If the SHA format is invalid
         """
+        if not _validate_git_sha(parent_sha):
+            raise ValueError(f"Invalid git SHA format: {parent_sha}")
+
         worktree_id = str(uuid.uuid4())
         worktree_path = self.worktree_base / worktree_id
 
@@ -1248,11 +1322,17 @@ class EvolutionGitManager:
                 pass
             else:
                 # For shared clone, push the new commit
-                subprocess.run(
-                    ["git", "push", "origin", f"HEAD:refs/heads/temp_{worktree.worktree_id}"],
-                    cwd=str(worktree.path),
-                    capture_output=True,
-                )
+                try:
+                    subprocess.run(
+                        ["git", "push", "origin", f"HEAD:refs/heads/temp_{worktree.worktree_id}"],
+                        cwd=str(worktree.path),
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Git push failed for worktree {worktree.worktree_id}: {e.stderr}")
+                    raise RuntimeError(f"Failed to push commit to origin: {e.stderr}") from e
 
             # CRITICAL: Create ref to prevent garbage collection
             self._create_node_ref(commit_sha, node_uuid)
@@ -1267,17 +1347,23 @@ class EvolutionGitManager:
             worktree: The MutationWorktree to clean up
         """
         try:
-            if not worktree.is_shared_clone:
-                # Remove git worktree registration
-                with self._git_lock():
+            with self._git_lock():
+                if not worktree.is_shared_clone:
+                    # Remove git worktree registration
                     subprocess.run(
                         ["git", "worktree", "remove", "--force", str(worktree.path)],
                         cwd=str(self.repo_path),
                         capture_output=True,
                     )
-            # Remove directory if it still exists
-            if worktree.path.exists():
-                shutil.rmtree(worktree.path, ignore_errors=True)
+                # Remove directory if it still exists (inside lock to prevent TOCTOU)
+                if worktree.path.exists():
+                    # Verify it's a directory and not a symlink (prevent symlink attacks)
+                    if worktree.path.is_dir() and not worktree.path.is_symlink():
+                        shutil.rmtree(worktree.path, ignore_errors=True)
+                    else:
+                        logger.warning(
+                            f"Skipping cleanup of {worktree.path}: not a directory or is a symlink"
+                        )
             logger.debug(f"Cleaned up mutation worktree {worktree.worktree_id}")
         except Exception as e:
             logger.warning(f"Failed to cleanup worktree {worktree.worktree_id}: {e}")
@@ -1322,7 +1408,13 @@ class EvolutionGitManager:
 
         Returns:
             Path to the created worktree
+
+        Raises:
+            ValueError: If the SHA format is invalid
         """
+        if not _validate_git_sha(sha):
+            raise ValueError(f"Invalid git SHA format: {sha}")
+
         target_path = Path(target_path).resolve()
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1445,7 +1537,11 @@ class EvolutionGitManager:
 
         Raises:
             subprocess.CalledProcessError: If the commit or file doesn't exist
+            ValueError: If the SHA format is invalid
         """
+        if not _validate_git_sha(sha):
+            raise ValueError(f"Invalid git SHA format: {sha}")
+
         if path:
             # Get specific file
             result = subprocess.run(
@@ -1493,7 +1589,13 @@ class EvolutionGitManager:
 
         Returns:
             Dict with: sha, message, author_date, parent_shas
+
+        Raises:
+            ValueError: If the SHA format is invalid
         """
+        if not _validate_git_sha(sha):
+            raise ValueError(f"Invalid git SHA format: {sha}")
+
         # Get commit message
         result = subprocess.run(
             ["git", "log", "-1", "--format=%B", sha],

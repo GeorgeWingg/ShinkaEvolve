@@ -95,6 +95,8 @@ class UIRunConfig:
     max_patch_attempts: int = 10
     max_patch_resamples: int = 3
     max_novelty_attempts: int = 3
+    code_embed_sim_threshold: float = 0.85  # Similarity threshold for novelty detection
+    novelty_exclude_parent: bool = False  # If True, exclude parent from novelty comparison
 
     # Island configuration
     num_islands: int = 2
@@ -210,6 +212,7 @@ class RunConfigBuilder:
 
         # Build EvaluatorConfig
         agentic_eval = AgenticEvaluatorConfig(
+            backend=self.ui.eval_backend,  # Pass evaluator backend from UI
             sandbox=self.ui.eval_sandbox,
             max_events=self.ui.eval_max_turns,  # Use canonical max_events field
             eval_prompt=self.ui.eval_prompt or None,
@@ -293,6 +296,8 @@ class RunConfigBuilder:
             max_patch_resamples=self.ui.max_patch_resamples,
             max_patch_attempts=self.ui.max_patch_attempts,
             max_novelty_attempts=self.ui.max_novelty_attempts,
+            code_embed_sim_threshold=self.ui.code_embed_sim_threshold,
+            novelty_exclude_parent=self.ui.novelty_exclude_parent,
             job_type=self.ui.job_type,
             language=self.ui.language,
             llm_models=self.ui.llm_models,
@@ -481,6 +486,8 @@ def flatten_nested_config(nested: Dict[str, Any]) -> Dict[str, Any]:
     flat["max_patch_attempts"] = run.get("max_patch_attempts", 10)
     flat["max_patch_resamples"] = run.get("max_patch_resamples", 3)
     flat["max_novelty_attempts"] = run.get("max_novelty_attempts", 3)
+    flat["code_embed_sim_threshold"] = run.get("code_embed_sim_threshold", 0.85)
+    flat["novelty_exclude_parent"] = run.get("novelty_exclude_parent", False)
     flat["num_islands"] = run.get("num_islands", 2)
     flat["archive_size"] = run.get("archive_size", 20)
     flat["migration_interval"] = run.get("migration_interval", 10)

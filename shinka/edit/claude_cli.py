@@ -143,27 +143,32 @@ def run_claude_task(
     # --verbose: Required for stream-json output
     cmd = [str(binary), "-p", "--output-format", "stream-json", "--verbose"]
 
-    # Model selection
-    if profile:
-        cmd.extend(["--model", profile])
+    # Load selected profile settings (model, permissions, thinking_level)
+    selected_model = None
+    selected_thinking_level = None
+    skip_permissions = False
+
+    try:
+        from shinka.webui.cli_profiles import get_selected_profiles_manager
+        selected_mgr = get_selected_profiles_manager()
+        selection = selected_mgr.get_selected("claude")
+        selected_model = selection.get("model")
+        selected_thinking_level = selection.get("thinking_level")
+        # Default to True if not explicitly set to False
+        skip_permissions = selection.get("skip_permissions", True)
+        logger.debug(f"Claude selected profile: model={selected_model}, thinking={selected_thinking_level}, skip_permissions={skip_permissions}")
+    except Exception as e:
+        logger.debug(f"Could not load Claude selected profile: {e}")
+        skip_permissions = True  # Default to skipping for agentic mode
+
+    # Model selection: explicit profile param > selected_profiles.json model
+    model_to_use = profile or selected_model
+    if model_to_use:
+        cmd.extend(["--model", model_to_use])
 
     # Permission/sandbox handling
-    # Check selected profile for skip_permissions setting
-    skip_permissions = False
     if approval_mode == "full-auto" or (sandbox and str(sandbox).strip()):
         skip_permissions = True
-    else:
-        # Load from selected profile
-        try:
-            from shinka.webui.cli_profiles import get_selected_profiles_manager
-            selected_mgr = get_selected_profiles_manager()
-            selection = selected_mgr.get_selected("claude")
-            # Default to True if not explicitly set to False
-            skip_permissions = selection.get("skip_permissions", True)
-            logger.debug(f"Claude skip_permissions from selected profile: {skip_permissions}")
-        except Exception as e:
-            logger.debug(f"Could not load Claude selected profile: {e}")
-            skip_permissions = True  # Default to skipping for agentic mode
 
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
@@ -197,14 +202,29 @@ def run_claude_task(
     except Exception as e:
         logger.debug(f"Could not load Claude shinka config: {e}")
 
-    # Build the combined system prompt: custom system prompt (if any) + harness system prompt
+    # Build the combined system prompt: thinking level + custom system prompt (if any) + harness system prompt
+    # Thinking level keywords trigger extended thinking in Claude ("think", "think hard", "think harder", "ultrathink")
+    thinking_prefix = ""
+    if selected_thinking_level:
+        thinking_map = {
+            "think": "Think step by step.",
+            "think_hard": "Think hard about this problem step by step.",
+            "think_harder": "Think harder and more carefully about this problem.",
+            "ultrathink": "Think very deeply and thoroughly about this problem. Take your time to consider all aspects.",
+        }
+        if selected_thinking_level in thinking_map:
+            thinking_prefix = thinking_map[selected_thinking_level] + "\n\n"
+            logger.debug(f"Added thinking prefix for level: {selected_thinking_level}")
+
     combined_system_prompt = None
     if custom_system_prompt and system_prompt:
-        combined_system_prompt = f"{custom_system_prompt}\n\n{system_prompt}"
+        combined_system_prompt = f"{thinking_prefix}{custom_system_prompt}\n\n{system_prompt}"
     elif custom_system_prompt:
-        combined_system_prompt = custom_system_prompt
+        combined_system_prompt = f"{thinking_prefix}{custom_system_prompt}"
     elif system_prompt:
-        combined_system_prompt = system_prompt
+        combined_system_prompt = f"{thinking_prefix}{system_prompt}" if thinking_prefix else system_prompt
+    elif thinking_prefix:
+        combined_system_prompt = thinking_prefix.strip()
 
     # Create temp files for system and user prompts to avoid ARG_MAX limits on macOS (~1MB)
     # Claude CLI supports --system-prompt-file for system prompt (print mode only)
@@ -289,28 +309,30 @@ def run_claude_task(
                     stderr_capture = None
 
             # Open user prompt file for piping to stdin
+            # Use try/finally to ensure handle is closed even if Popen fails
             prompt_file_handle = None
-            if user_prompt_temp_path:
-                try:
-                    prompt_file_handle = open(user_prompt_temp_path, 'r', encoding='utf-8')
-                except Exception as e:
-                    logger.error(f"Failed to open user prompt temp file for reading: {e}")
-                    raise ClaudeExecutionError(f"Failed to open user prompt temp file: {e}")
+            try:
+                if user_prompt_temp_path:
+                    try:
+                        prompt_file_handle = open(user_prompt_temp_path, 'r', encoding='utf-8')
+                    except Exception as e:
+                        logger.error(f"Failed to open user prompt temp file for reading: {e}")
+                        raise ClaudeExecutionError(f"Failed to open user prompt temp file: {e}")
 
-            process = subprocess.Popen(
-                cmd_with_prompt,
-                stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=cwd,
-                env=env,
-            )
-
-            # Close our handle to the file; Popen has its own
-            if prompt_file_handle:
-                prompt_file_handle.close()
-                prompt_file_handle = None
+                process = subprocess.Popen(
+                    cmd_with_prompt,
+                    stdin=prompt_file_handle if prompt_file_handle else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=cwd,
+                    env=env,
+                )
+            finally:
+                # Close our handle to the file; Popen has its own duplicate
+                if prompt_file_handle:
+                    prompt_file_handle.close()
+                    prompt_file_handle = None
 
             lines = user_prompt.strip().splitlines() if user_prompt else []
             prompt_preview = lines[0][:160] if lines else ""
@@ -342,6 +364,19 @@ def run_claude_task(
                     line = process.stdout.readline()
                     if not line:
                         if process.poll() is not None:
+                            # Check exit code before returning
+                            exit_code = process.returncode
+                            if exit_code != 0:
+                                stderr_content = ""
+                                try:
+                                    if process.stderr:
+                                        stderr_content = process.stderr.read()
+                                except Exception:
+                                    pass
+                                raise ClaudeExecutionError(
+                                    f"Claude process exited with code {exit_code}. "
+                                    f"Stderr: {stderr_content[:500] if stderr_content else 'N/A'}"
+                                )
                             # Emit usage event at end
                             yield {
                                 "type": "usage",

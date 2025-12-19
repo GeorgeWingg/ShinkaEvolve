@@ -360,14 +360,15 @@ class GeminiConfigManager:
 
 
 class ClaudeConfigManager:
-    """Manages ~/.claude/settings.json configuration.
+    """Manages ~/.claude.json configuration.
 
-    Claude Code uses JSON format with MCP servers in 'mcpServers' key.
+    Claude Code reads MCP servers from ~/.claude.json (NOT ~/.claude/settings.json).
+    Uses JSON format with MCP servers in 'mcpServers' key.
     Also supports 'allowedTools' for restricting available tools.
     """
 
     def __init__(self, config_path: Optional[Path] = None):
-        self.config_path = config_path or Path.home() / ".claude" / "settings.json"
+        self.config_path = config_path or Path.home() / ".claude.json"
 
     def _ensure_dir_exists(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

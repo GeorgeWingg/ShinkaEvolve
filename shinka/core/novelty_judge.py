@@ -20,11 +20,14 @@ class NoveltyJudge:
         self,
         novelty_llm_client: Optional[LLMClient],
         language: str,
-        similarity_threshold: float = 1.0,
+        similarity_threshold: float = 0.85,
         max_novelty_attempts: int = 3,
         agentic_mode: bool = False,
         agent_runner: Optional[AgentRunner] = None,
         agent_config: Optional[Any] = None,
+        code_loader: Optional[Callable[[Program], str]] = None,
+        error_accepts: bool = False,
+        exclude_parent: bool = False,
     ):
         self.llm = novelty_llm_client
         self.language = language
@@ -33,6 +36,9 @@ class NoveltyJudge:
         self.agentic_mode = agentic_mode
         self.agent_runner = agent_runner
         self.agent_config = agent_config
+        self.code_loader = code_loader
+        self.error_accepts = error_accepts
+        self.exclude_parent = exclude_parent
 
     def should_check_novelty(
         self,
@@ -97,8 +103,11 @@ class NoveltyJudge:
 
         for attempt in range(self.max_novelty_attempts):
             # Compute similarities with programs in island
+            # If exclude_parent is True, exclude the parent program from comparison
+            exclude_id = parent_program.id if self.exclude_parent else None
             similarity_scores = database.compute_similarity(
-                code_embedding, parent_program.island_idx
+                code_embedding, parent_program.island_idx,
+                exclude_program_id=exclude_id
             )
 
             if not similarity_scores:
@@ -136,7 +145,8 @@ class NoveltyJudge:
             if can_check:
                 # Get the most similar program for LLM comparison
                 most_similar_program = database.get_most_similar_program(
-                    code_embedding, parent_program.island_idx
+                    code_embedding, parent_program.island_idx,
+                    exclude_program_id=exclude_id
                 )
 
                 if most_similar_program:
@@ -200,7 +210,13 @@ class NoveltyJudge:
             Tuple of (is_novel, explanation, api_cost)
         """
         original_code = most_similar_program.code
-        
+        if (not original_code) and self.code_loader is not None:
+            try:
+                original_code = self.code_loader(most_similar_program)
+            except Exception as e:
+                logger.warning(f"Failed to load code for novelty check: {e}")
+                original_code = most_similar_program.code
+
         # In agentic mode, use the agent runner if available
         if self.agentic_mode and self.agent_runner and self.agent_config:
             return self._check_llm_novelty_agentic(original_code, proposed_code)
@@ -234,7 +250,10 @@ class NoveltyJudge:
 
         except Exception as e:
             logger.error(f"Error in novelty LLM check: {e}")
-            return True, f"Error in novelty check: {e}", 0.0
+            if self.error_accepts:
+                return True, f"Error (accepting): {e}", 0.0
+            else:
+                return False, f"Error (rejecting): {e}", 0.0
 
     def _check_llm_novelty_agentic(
         self,
@@ -284,7 +303,10 @@ class NoveltyJudge:
             
             except Exception as e:
                 logger.warning(f"Agentic novelty check failed: {e}")
-                return True, f"Agentic check failed ({e}), defaulting to accept.", 0.0
+                if self.error_accepts:
+                    return True, f"Agentic check failed ({e}), defaulting to accept.", 0.0
+                else:
+                    return False, f"Agentic check failed ({e}), defaulting to reject.", 0.0
 
         response_content = response_text.strip()
         return self._parse_novelty_response(response_content, cost)

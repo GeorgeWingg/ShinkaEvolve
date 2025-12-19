@@ -37,9 +37,10 @@ def test_run_gemini_task_streams_events(mock_subprocess, mock_ensure_gemini):
     def readline_side_effect():
         if events:
             return events.pop(0) + "\n"
-        mock_process.poll.return_value = 0 # Signal exit
+        mock_process.poll.return_value = 0  # Signal exit
+        mock_process.returncode = 0  # Set returncode for exit code validation
         return ""
-        
+
     mock_process.stdout.readline.side_effect = readline_side_effect
     mock_subprocess.return_value = mock_process
 
@@ -117,6 +118,7 @@ def test_gemini_parity_args(mock_subprocess, mock_ensure_gemini):
     mock_process.pid = 111
     mock_process.stdout.readline.return_value = ""
     mock_process.poll.return_value = 0
+    mock_process.returncode = 0  # Set returncode for exit code validation
     mock_subprocess.return_value = mock_process
 
     # 1. Test Sandbox flag injection
@@ -172,6 +174,7 @@ def test_gemini_prompt_combination(mock_subprocess, mock_ensure_gemini, tmp_path
     mock_process.stdin = MagicMock()
     mock_process.stdout.readline.return_value = ""
     mock_process.poll.return_value = 0
+    mock_process.returncode = 0  # Set returncode for exit code validation
     mock_subprocess.return_value = mock_process
 
     system_prompt = "Be helpful."

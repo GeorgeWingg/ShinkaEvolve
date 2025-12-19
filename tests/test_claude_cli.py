@@ -132,6 +132,7 @@ def test_run_claude_task_streams_events(mock_subprocess, mock_ensure_claude):
         if events:
             return events.pop(0) + "\n"
         mock_process.poll.return_value = 0
+        mock_process.returncode = 0  # Set returncode for exit code validation
         return ""
 
     mock_process.stdout.readline.side_effect = readline_side_effect
@@ -222,6 +223,7 @@ def test_run_claude_task_handles_errors(mock_subprocess, mock_ensure_claude):
         if events:
             return events.pop(0) + "\n"
         mock_process.poll.return_value = 0
+        mock_process.returncode = 0  # Set returncode for exit code validation
         return ""
 
     mock_process.stdout.readline.side_effect = readline_side_effect
@@ -254,6 +256,7 @@ def test_claude_parity_args(mock_subprocess, mock_ensure_claude):
     mock_process.pid = 111
     mock_process.stdout.readline.return_value = ""
     mock_process.poll.return_value = 0
+    mock_process.returncode = 0  # Set returncode for exit code validation
     mock_subprocess.return_value = mock_process
 
     # Test 1: Model selection
@@ -312,6 +315,7 @@ def test_claude_prompt_handling(mock_subprocess, mock_ensure_claude):
     mock_process.stdin = MagicMock()
     mock_process.stdout.readline.return_value = ""
     mock_process.poll.return_value = 0
+    mock_process.returncode = 0  # Set returncode for exit code validation
     mock_subprocess.return_value = mock_process
 
     user_prompt = "Write some code"
@@ -342,6 +346,7 @@ def test_claude_system_prompt(mock_subprocess, mock_ensure_claude):
     mock_process.stdin = MagicMock()
     mock_process.stdout.readline.return_value = ""
     mock_process.poll.return_value = 0
+    mock_process.returncode = 0  # Set returncode for exit code validation
     mock_subprocess.return_value = mock_process
 
     system_prompt = "You are a helpful assistant."
@@ -393,6 +398,7 @@ def test_claude_usage_event_emitted(mock_subprocess, mock_ensure_claude):
         if events:
             return events.pop(0) + "\n"
         mock_process.poll.return_value = 0
+        mock_process.returncode = 0  # Set returncode for exit code validation
         return ""
 
     mock_process.stdout.readline.side_effect = readline_side_effect

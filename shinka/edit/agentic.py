@@ -146,7 +146,7 @@ class AgenticEditor:
                 sandbox=self.config.sandbox,
                 approval_mode=self.config.approval_mode,
                 max_seconds=self.config.max_seconds,
-                max_events=self.config.max_turns,
+                max_events=self.config.max_events,
                 extra_cli_config=self.config.extra_cli_config,
                 cli_path=self.config.cli_path,
                 resume_session_id=context.resume_session_id,

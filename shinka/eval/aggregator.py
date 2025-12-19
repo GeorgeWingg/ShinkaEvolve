@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class EvaluatorScore:
     """Score from a single evaluator in the ensemble."""
 
@@ -133,10 +133,10 @@ class ScoreAggregator:
         # Handle failure modes
         if self.config.failure_mode == "zero":
             # Treat failed evaluators as score=0, correct=False
-            for name, s in failed.items():
-                s.score = 0.0
-                s.correct = False
-            successful.update(failed)
+            # Use replace() to create modified copies, preserving original objects
+            for name, s in list(failed.items()):
+                modified = replace(s, score=0.0, correct=False)
+                successful[name] = modified
             failed = {}
         elif self.config.failure_mode == "fail":
             # Fail if any required evaluator failed

@@ -7,18 +7,47 @@ allowing the system to learn preferences across multiple experiment runs.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Cross-platform file locking
+if sys.platform == 'win32':
+    import msvcrt
+    def _lock_file(f, exclusive: bool = True) -> None:
+        """Acquire file lock on Windows."""
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK if exclusive else msvcrt.LK_NBRLCK, 1)
+
+    def _unlock_file(f) -> None:
+        """Release file lock on Windows."""
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+    def _lock_file(f, exclusive: bool = True) -> None:
+        """Acquire file lock on Unix."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+
+    def _unlock_file(f) -> None:
+        """Release file lock on Unix."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+logger = logging.getLogger(__name__)
+
 # Default location for global bandit history
 DEFAULT_HISTORY_PATH = Path.home() / ".shinka" / "bandit_history.json"
 
 # Current schema version for migrations
 SCHEMA_VERSION = 1
+
+# Maximum number of interactions to keep in history (configurable via env var)
+DEFAULT_BANDIT_HISTORY_MAX = 10000
+BANDIT_HISTORY_MAX = int(os.environ.get("SHINKA_BANDIT_HISTORY_MAX", DEFAULT_BANDIT_HISTORY_MAX))
 
 
 @dataclass
@@ -209,12 +238,16 @@ class BanditHistory:
         return self._data
     
     def _load(self) -> None:
-        """Load history from disk."""
-        with self._file_lock:
+        """Load history from disk with cross-process file locking."""
+        with self._file_lock:  # Thread lock
             if self.history_path.exists():
                 try:
                     with open(self.history_path, 'r') as f:
-                        raw = json.load(f)
+                        try:
+                            _lock_file(f, exclusive=False)  # Shared lock for reads
+                            raw = json.load(f)
+                        finally:
+                            _unlock_file(f)
                     self._data = BanditHistoryData.from_dict(raw)
                     # Migrate if needed
                     if self._data.version < SCHEMA_VERSION:
@@ -226,15 +259,19 @@ class BanditHistory:
                 self._data = BanditHistoryData()
     
     def _save(self) -> None:
-        """Save history to disk."""
+        """Save history to disk with atomic writes and cross-process locking.
+
+        Uses temp file + os.replace() for atomic writes to prevent corruption
+        if the process crashes mid-write.
+        """
         if self._data is None:
             return
-            
-        with self._file_lock:
+
+        with self._file_lock:  # Thread lock
             try:
                 self.history_path.parent.mkdir(parents=True, exist_ok=True)
                 self._data.last_updated = datetime.now(timezone.utc).isoformat()
-                
+
                 # Custom JSON encoder for inf values
                 def encode_value(obj):
                     if isinstance(obj, float):
@@ -243,12 +280,33 @@ class BanditHistory:
                         if obj == float('-inf'):
                             return "-Infinity"
                     return obj
-                
+
                 data_dict = self._data.to_dict()
-                
-                with open(self.history_path, 'w') as f:
-                    json.dump(data_dict, f, indent=2, default=encode_value)
-                self._dirty = False
+
+                # Atomic write: write to temp file, then rename
+                # os.replace() is atomic on POSIX systems
+                fd, temp_path = tempfile.mkstemp(
+                    dir=self.history_path.parent,
+                    prefix='.bandit_history_',
+                    suffix='.tmp'
+                )
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        _lock_file(f, exclusive=True)  # Exclusive lock for writes
+                        try:
+                            json.dump(data_dict, f, indent=2, default=encode_value)
+                        finally:
+                            _unlock_file(f)
+                    # Atomic rename
+                    os.replace(temp_path, self.history_path)
+                    self._dirty = False
+                except Exception:
+                    # Clean up temp file on error
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                    raise
             except Exception as e:
                 print(f"[BanditHistory] Warning: Failed to save history: {e}")
     
@@ -257,6 +315,84 @@ class BanditHistory:
         # Future migration logic here
         if self._data:
             self._data.version = SCHEMA_VERSION
+
+    def _recompute_global_stats(self, data: BanditHistoryData) -> None:
+        """Recompute global_stats from remaining interactions after truncation.
+
+        This ensures stats remain consistent when old interactions are dropped.
+        Also cleans up orphaned runs that no longer have any interactions.
+        """
+        # Get set of run_ids that still have interactions
+        active_run_ids = {i.run_id for i in data.interactions}
+
+        # Remove orphaned runs
+        orphaned_runs = [rid for rid in data.runs if rid not in active_run_ids]
+        for rid in orphaned_runs:
+            del data.runs[rid]
+
+        # Reset global stats
+        new_stats: Dict[str, BackendGlobalStats] = {}
+
+        # Track runs_participated per backend
+        backend_runs: Dict[str, set] = {}
+
+        # Rebuild stats from remaining interactions
+        for interaction in data.interactions:
+            backend = interaction.backend
+
+            if backend not in new_stats:
+                new_stats[backend] = BackendGlobalStats()
+                backend_runs[backend] = set()
+
+            stats = new_stats[backend]
+            stats.total_selections += 1
+            backend_runs[backend].add(interaction.run_id)
+
+            reward = interaction.reward
+            baseline = interaction.baseline
+
+            if reward is not None:
+                stats.total_completions += 1
+                stats.cumulative_reward += reward
+                stats.best_reward = max(stats.best_reward, reward)
+                if stats.worst_reward == float('inf'):
+                    stats.worst_reward = reward
+                else:
+                    stats.worst_reward = min(stats.worst_reward, reward)
+                stats.avg_reward = stats.cumulative_reward / stats.total_completions
+
+                if baseline is not None:
+                    improvement = reward - baseline
+                    stats.cumulative_improvement += improvement
+                    if improvement > 0:
+                        stats.total_successes += 1
+                    else:
+                        stats.total_failures += 1
+                else:
+                    if reward > 0:
+                        stats.total_successes += 1
+                    else:
+                        stats.total_failures += 1
+
+                if stats.total_completions > 0:
+                    stats.win_rate = stats.total_successes / stats.total_completions
+
+        # Set runs_participated and last_used for each backend
+        for backend, stats in new_stats.items():
+            stats.runs_participated = len(backend_runs[backend])
+            # Find last interaction timestamp for this backend
+            backend_interactions = [i for i in data.interactions if i.backend == backend]
+            if backend_interactions:
+                stats.last_used = backend_interactions[-1].timestamp
+
+        # Update data with recomputed stats
+        data.global_stats = new_stats
+        data.total_runs = len(data.runs)
+
+        logger.info(
+            f"Recomputed global stats after truncation: {len(new_stats)} backends, "
+            f"{len(data.runs)} active runs"
+        )
     
     def record_interaction(
         self,
@@ -325,10 +461,17 @@ class BanditHistory:
             run.best_score = reward
             run.best_backend = backend
         
-        # Add interaction (keep last 10000 for memory)
+        # Add interaction (keep last BANDIT_HISTORY_MAX for memory)
         data.interactions.append(interaction)
-        if len(data.interactions) > 10000:
-            data.interactions = data.interactions[-10000:]
+        if len(data.interactions) > BANDIT_HISTORY_MAX:
+            num_dropped = len(data.interactions) - BANDIT_HISTORY_MAX
+            logger.warning(
+                f"Bandit history truncated: dropping {num_dropped} oldest interactions "
+                f"(cap={BANDIT_HISTORY_MAX}). Set SHINKA_BANDIT_HISTORY_MAX env var to increase."
+            )
+            data.interactions = data.interactions[-BANDIT_HISTORY_MAX:]
+            # Recompute global stats to remain consistent with truncated interactions
+            self._recompute_global_stats(data)
         data.total_interactions += 1
         
         self._dirty = True

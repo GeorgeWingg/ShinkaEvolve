@@ -104,7 +104,7 @@ class AgenticEvaluator:
                 sandbox=self.config.sandbox,
                 approval_mode=self.config.approval_mode,
                 max_seconds=self.config.max_seconds,
-                max_events=self.config.max_turns,
+                max_events=self.config.max_events,
                 extra_cli_config=self.config.extra_cli_config,
                 codex_path=self.config.codex_path,
                 session_kind="eval",

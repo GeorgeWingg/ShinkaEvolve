@@ -148,9 +148,10 @@ def run_codex_task(
     except CodexAuthError as exc:
         raise CodexExecutionError(str(exc)) from exc
 
-    # Load selected profile and sandbox from Shinka config
+    # Load selected profile, sandbox, model, and reasoning from Shinka config
     selected_profile = profile
     selected_sandbox = sandbox
+    selected_model = None
     try:
         from shinka.webui.cli_profiles import get_selected_profiles_manager
         selected_mgr = get_selected_profiles_manager()
@@ -161,24 +162,32 @@ def run_codex_task(
         if selection.get("sandbox") and not sandbox:
             selected_sandbox = selection["sandbox"]
             logger.debug(f"Using selected Codex sandbox: {selected_sandbox}")
+        # Get model selection from UI
+        selected_model = selection.get("model")
+        if selected_model:
+            logger.debug(f"Using selected Codex model: {selected_model}")
+
+        # Helper to convert OmegaConf to dict if needed
+        def ensure_dict(cfg):
+            try:
+                from omegaconf import OmegaConf
+                if OmegaConf.is_config(cfg):
+                    converted = OmegaConf.to_container(cfg, resolve=True)
+                    return converted if isinstance(converted, dict) else dict(cfg)
+            except Exception:
+                pass
+            return dict(cfg) if not isinstance(cfg, dict) else cfg
+
+        # Allow UI-selected model to flow into extra_cli_config
+        if selected_model and "model" not in extra_cli_config:
+            extra_cli_config = ensure_dict(extra_cli_config)
+            extra_cli_config["model"] = selected_model
+
         # Allow UI-selected reasoning effort to flow into extra_cli_config
-        # unless the run config already specifies it.
         effort = selection.get("model_reasoning_effort")
         if isinstance(effort, str) and effort.strip():
             if "model_reasoning_effort" not in extra_cli_config:
-                # Preserve OmegaConf containers by resolving to plain dict
-                try:
-                    from omegaconf import OmegaConf  # type: ignore
-
-                    if OmegaConf.is_config(extra_cli_config):
-                        converted = OmegaConf.to_container(extra_cli_config, resolve=True)
-                        extra_cli_config = (
-                            converted if isinstance(converted, dict) else dict(extra_cli_config)
-                        )
-                    else:
-                        extra_cli_config = dict(extra_cli_config)
-                except Exception:
-                    extra_cli_config = dict(extra_cli_config)
+                extra_cli_config = ensure_dict(extra_cli_config)
                 extra_cli_config["model_reasoning_effort"] = effort.strip()
     except Exception as e:
         logger.debug(f"Could not load Codex selected profile: {e}")
@@ -257,7 +266,7 @@ def run_codex_task(
     # Token estimation for cost tracking (Codex CLI doesn't emit usage data)
     estimated_input_tokens = len(full_prompt) // 4 if full_prompt else 0
     estimated_output_tokens = 0
-    model_name = profile or "gpt-4.1-mini"  # Default Codex model (in pricing.py)
+    model_name = selected_model or profile or "gpt-4.1-mini"  # Default Codex model
     session_id: Optional[str] = None
 
     # Open prompt file for piping to stdin

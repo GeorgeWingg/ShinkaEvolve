@@ -21,7 +21,7 @@ class TestOpenRouterAuth:
         from shinka.tools.auth_status import check_openrouter_auth
 
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-test-123"}):
-            status = check_openrouter_auth()
+            status = check_openrouter_auth(skip_cache=True)
 
         assert status.backend == "openrouter"
         assert status.available is True
@@ -38,7 +38,7 @@ class TestOpenRouterAuth:
             "shinka.tools.credentials.get_api_key",
             side_effect=lambda p: "sk-or-stored-123" if p == "openrouter" else None,
         ):
-            status = check_openrouter_auth()
+            status = check_openrouter_auth(skip_cache=True)
 
         assert status.available is True
         assert os.environ.get("OPENROUTER_API_KEY") == "sk-or-stored-123"
@@ -50,7 +50,7 @@ class TestOpenRouterAuth:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
         with patch("shinka.tools.credentials.get_api_key", return_value=None):
-            status = check_openrouter_auth()
+            status = check_openrouter_auth(skip_cache=True)
 
         assert status.available is False
         assert "not set" in status.error.lower()

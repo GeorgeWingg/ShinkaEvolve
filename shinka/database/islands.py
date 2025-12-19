@@ -29,8 +29,14 @@ class IslandStrategy(ABC):
         self.config = config
 
     @abstractmethod
-    def assign_island(self, program: Any) -> None:
-        """Assign an island to a program."""
+    def assign_island(self, program: Any, parent_island_idx: Optional[int] = None) -> None:
+        """Assign an island to a program.
+
+        Args:
+            program: The program to assign an island to
+            parent_island_idx: Optional pre-fetched parent island index to avoid
+                             DB lookup (useful when parent isn't committed yet)
+        """
         pass
 
     def get_initialized_islands(self) -> List[int]:
@@ -63,16 +69,30 @@ class DefaultIslandAssignmentStrategy(IslandStrategy):
         }
         return list(islands_with_correct)
 
-    def assign_island(self, program: Any) -> None:
+    def assign_island(self, program: Any, parent_island_idx: Optional[int] = None) -> None:
         """
         Assigns an island index to a program.
         - Children are placed on the same island as their parents.
         - Initial correct programs are distributed one per island.
         - Other initial programs are placed randomly, preferring empty islands.
+
+        Args:
+            program: The program to assign an island to
+            parent_island_idx: Optional pre-fetched parent island index (avoids DB lookup)
         """
         num_islands = getattr(self.config, "num_islands", 0)
         if num_islands <= 0:
             program.island_idx = 0
+            return
+
+        # If the program has a parent and we have the parent's island, use it directly
+        # This handles the case where parent isn't committed yet
+        if program.parent_id and parent_island_idx is not None:
+            program.island_idx = parent_island_idx
+            logger.debug(
+                f"Assigned program {program.id} to parent's island "
+                f"{program.island_idx} (direct passthrough)"
+            )
             return
 
         # Check for uninitialized islands (islands with no programs at all)
@@ -88,7 +108,7 @@ class DefaultIslandAssignmentStrategy(IslandStrategy):
             )
             return
 
-        # If the program has a parent, it inherits the parent's island.
+        # If the program has a parent, try to look it up in the database
         if program.parent_id:
             self.cursor.execute(
                 "SELECT island_idx FROM programs WHERE id = ?", (program.parent_id,)
@@ -125,13 +145,17 @@ class CopyInitialProgramIslandStrategy(IslandStrategy):
         }
         return list(islands_with_correct)
 
-    def assign_island(self, program: Any) -> None:
+    def assign_island(self, program: Any, parent_island_idx: Optional[int] = None) -> None:
         """
         Assigns an island index to a program.
         - Children are placed on the same island as their parents.
         - For the first program added, it gets assigned to island 0 and copies
           are created for all other islands.
         - Other programs follow normal assignment rules.
+
+        Args:
+            program: The program to assign an island to
+            parent_island_idx: Optional pre-fetched parent island index (avoids DB lookup)
         """
         num_islands = getattr(self.config, "num_islands", 0)
         if num_islands <= 0:
@@ -155,7 +179,17 @@ class CopyInitialProgramIslandStrategy(IslandStrategy):
             program.metadata["_needs_island_copies"] = True
             return
 
-        # If the program has a parent, it inherits the parent's island.
+        # If the program has a parent and we have the parent's island, use it directly
+        # This handles the case where parent isn't committed yet
+        if program.parent_id and parent_island_idx is not None:
+            program.island_idx = parent_island_idx
+            logger.debug(
+                f"Assigned program {program.id} to parent's island "
+                f"{program.island_idx} (direct passthrough)"
+            )
+            return
+
+        # If the program has a parent, try to look it up in the database
         if program.parent_id:
             self.cursor.execute(
                 "SELECT island_idx FROM programs WHERE id = ?", (program.parent_id,)
@@ -519,9 +553,14 @@ class CombinedIslandManager:
             ElitistMigrationStrategy(cursor, conn, config)
         )
 
-    def assign_island(self, program: Any) -> None:
-        """Assign an island to a program using the configured strategy."""
-        self.assignment_strategy.assign_island(program)
+    def assign_island(self, program: Any, parent_island_idx: Optional[int] = None) -> None:
+        """Assign an island to a program using the configured strategy.
+
+        Args:
+            program: The program to assign an island to
+            parent_island_idx: Optional pre-fetched parent island index (avoids DB lookup)
+        """
+        self.assignment_strategy.assign_island(program, parent_island_idx)
 
     def perform_migration(self, current_generation: int) -> bool:
         """Perform migration using the configured strategy."""
