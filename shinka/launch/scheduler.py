@@ -36,6 +36,7 @@ class LocalJobConfig(JobConfig):
 
     time: Optional[str] = None
     conda_env: Optional[str] = None
+    gpus: int = 0  # Number of GPUs to request (0 = no GPU wait)
 
 
 @dataclass
@@ -151,7 +152,9 @@ class JobScheduler:
 
         if self.job_type == "local":
             assert isinstance(self.config, LocalJobConfig)
-            job_id = submit_local(results_dir_t, cmd, verbose=self.verbose)
+            job_id = submit_local(
+                results_dir_t, cmd, verbose=self.verbose, gpus=self.config.gpus
+            )
         elif self.job_type == "slurm_docker":
             assert isinstance(self.config, SlurmDockerJobConfig)
             job_id = submit_slurm_docker(
@@ -205,7 +208,9 @@ class JobScheduler:
         cmd = self._build_command(exec_fname_t, results_dir_t)
         if self.job_type == "local":
             assert isinstance(self.config, LocalJobConfig)
-            return submit_local(results_dir_t, cmd, verbose=self.verbose)
+            return submit_local(
+                results_dir_t, cmd, verbose=self.verbose, gpus=self.config.gpus
+            )
         elif self.job_type == "slurm_docker":
             assert isinstance(self.config, SlurmDockerJobConfig)
             return submit_slurm_docker(

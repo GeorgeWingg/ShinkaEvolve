@@ -9,6 +9,64 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Default interval for polling GPU availability
+GPU_POLL_INTERVAL = 5  # seconds
+
+
+def _wait_for_free_gpus(gpus_needed: int, poll_interval: int = GPU_POLL_INTERVAL) -> str:
+    """
+    Wait until the required number of free GPUs are available.
+
+    Args:
+        gpus_needed: Number of GPUs required
+        poll_interval: Time in seconds between nvidia-smi checks
+
+    Returns:
+        Comma-separated string of free GPU indices (e.g., "0,1")
+    """
+    while True:
+        try:
+            res = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,memory.used",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode != 0:
+                logger.warning("nvidia-smi failed, proceeding without GPU wait")
+                return ""
+
+            lines = res.stdout.strip().splitlines()
+            free_gpus = []
+            for line in lines:
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) >= 2:
+                    idx, mem_used = parts[0], parts[1]
+                    # GPU is free if memory used is 0 or very low (< 100 MB)
+                    try:
+                        if int(mem_used) < 100:
+                            free_gpus.append(idx)
+                    except ValueError:
+                        pass
+
+            if len(free_gpus) >= gpus_needed:
+                selected = free_gpus[:gpus_needed]
+                logger.info(f"Found {len(free_gpus)} free GPUs, using: {selected}")
+                return ",".join(selected)
+
+            logger.debug(f"Waiting for GPUs: need {gpus_needed}, found {len(free_gpus)} free")
+            time.sleep(poll_interval)
+
+        except FileNotFoundError:
+            logger.warning("nvidia-smi not found, proceeding without GPU scheduling")
+            return ""
+        except Exception as e:
+            logger.warning(f"Error checking GPU availability: {e}, proceeding without wait")
+            return ""
+
 
 class ProcessWithLogging:
     """Wrapper for subprocess.Popen with real-time logging capabilities."""
@@ -71,7 +129,7 @@ def _stream_output(pipe, file_handle, verbose_prefix=None):
         pipe.close()
 
 
-def submit(log_dir: str, cmd: list[str], verbose: bool = False):
+def submit(log_dir: str, cmd: list[str], verbose: bool = False, gpus: int = 0):
     """
     Submits a command for local execution with real-time logging.
 
@@ -79,6 +137,7 @@ def submit(log_dir: str, cmd: list[str], verbose: bool = False):
         log_dir: The directory to store logs.
         cmd: The command and its arguments as a list of strings.
         verbose: Whether to enable verbose logging.
+        gpus: Number of GPUs required. If > 0, waits for free GPUs before launching.
 
     Returns:
         ProcessWithLogging: Wrapper containing the Popen object and logging.
@@ -93,6 +152,16 @@ def submit(log_dir: str, cmd: list[str], verbose: bool = False):
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"  # Force Python to be unbuffered
     env["PYTHONIOENCODING"] = "utf-8"  # Ensure proper encoding
+
+    # Wait for free GPUs if requested
+    if gpus > 0:
+        if verbose:
+            logger.info(f"Waiting for {gpus} free GPU(s)...")
+        gpu_ids = _wait_for_free_gpus(gpus)
+        if gpu_ids:
+            env["CUDA_VISIBLE_DEVICES"] = gpu_ids
+            if verbose:
+                logger.info(f"Set CUDA_VISIBLE_DEVICES={gpu_ids}")
 
     # Use PIPE to capture output and redirect to files in real-time
     process = subprocess.Popen(

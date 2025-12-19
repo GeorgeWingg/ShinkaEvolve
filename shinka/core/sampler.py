@@ -205,6 +205,15 @@ class PromptSampler:
             else:
                 score_context = "This is a fresh start. Create what you need."
 
+            # Add explicit section header for inspirations in agentic mode
+            # (eval_history_msg contains the actual inspiration code, this just adds context)
+            if eval_history_msg.strip():
+                eval_history_msg = (
+                    "# Reference Examples\n\n"
+                    "The following are high-quality code examples from prior runs that may help:\n\n"
+                    + eval_history_msg
+                )
+
             iter_msg = AGENTIC_ITER_MSG.format(
                 task_context=task_context,
                 score_context=score_context,

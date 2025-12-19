@@ -52,6 +52,7 @@ from shinka.webui.cli_profiles import (
     GeminiConfigManager,
 )
 from shinka.webui.plan_sessions import start_plan_session, append_plan_message
+from shinka.webui.sse_server import run_sse_server_sync, DEFAULT_SSE_PORT
 
 # We'll use a simple text-to-PDF approach instead of complex dependencies
 WEASYPRINT_AVAILABLE = False
@@ -5772,6 +5773,16 @@ def main():
         sys.exit(1)
 
     print(f"[INFO] Searching for databases in: {search_root}")
+
+    # Start SSE server in a daemon thread for real-time event streaming
+    sse_port = DEFAULT_SSE_PORT
+    sse_thread = threading.Thread(
+        target=run_sse_server_sync,
+        args=(sse_port, search_root, args.bind),
+        daemon=True,
+    )
+    sse_thread.start()
+    print(f"[INFO] SSE server starting on port {sse_port}")
 
     # Kick off the HTTP server in a daemon thread.
     server_thread = threading.Thread(

@@ -1,0 +1,34 @@
+defaults:
+  - agentic
+
+# Enable Meta-LLM for automatic recommendations
+#
+# The Meta-LLM analyzes the evolutionary progress and generates recommendations
+# for the next program generations. This requires an OPENAI_API_KEY environment
+# variable to be set.
+#
+# Usage:
+#   env OPENAI_API_KEY=sk-xxx uv run shinka_launch evolution=agentic_meta variant=...
+#
+# The meta summarizer will:
+# 1. Analyze programs added since the last meta-update
+# 2. Generate recommendations using the specified model(s)
+# 3. Include recommendations in the next prompt to guide evolution
+#
+evo_config:
+  # Model(s) for meta-LLM recommendations
+  # Use smaller models for cost efficiency during frequent updates
+  meta_llm_models:
+    - gpt-4o-mini
+
+  # How often to update recommendations (every N programs added)
+  # Lower values = more frequent updates (higher cost, potentially better guidance)
+  # Higher values = less frequent updates (lower cost, may miss opportunities)
+  meta_rec_interval: 10
+
+  # Maximum number of recommendations per update
+  meta_max_recommendations: 5
+
+  # Optional: Additional kwargs for meta-LLM requests
+  # meta_llm_kwargs:
+  #   temperatures: [0.0, 0.3]  # Lower temp for more focused recommendations

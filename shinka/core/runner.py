@@ -489,6 +489,28 @@ class EvaluatorConfig:
 
 @dataclass
 class EvolutionConfig:
+    """Configuration for the evolutionary run.
+
+    Meta-LLM Options (for automatic recommendations):
+        The meta-LLM analyzes evolutionary progress and generates recommendations
+        for the next program generations. To enable, set meta_llm_models.
+
+        - meta_rec_interval: How often to update recommendations (every N programs).
+          Set to 10-20 for frequent guidance, higher values for cost efficiency.
+        - meta_llm_models: List of model names (e.g., ["gpt-4o-mini"]). Setting this
+          enables the meta-LLM feature. Requires OPENAI_API_KEY in environment.
+        - meta_llm_kwargs: Additional kwargs passed to the LLM client.
+        - meta_max_recommendations: Max recommendations per update (default: 5).
+        - meta_backend: Backend for meta-LLM ("same", "codex", "gemini", "claude",
+          "shinka", or None). None uses the LLM API directly.
+
+        Example config to enable meta-LLM:
+            evolution=agentic_meta  # Uses configs/evolution/agentic_meta.yaml
+
+        Or via Hydra overrides:
+            +evo_config.meta_llm_models=['gpt-4o-mini'] +evo_config.meta_rec_interval=10
+    """
+
     task_sys_msg: Optional[str] = None
     patch_types: List[str] = field(default_factory=lambda: ["diff"])
     patch_type_probs: List[float] = field(default_factory=lambda: [1.0])
@@ -2617,6 +2639,9 @@ class EvolutionRunner:
             else None
         )
         self.db.add(db_program, verbose=True, parent_island_idx=parent_island_idx)
+
+        # Check for scheduled operations (island migration, etc.)
+        self.db.check_scheduled_operations()
 
         # Add the evaluated program to meta memory tracking
         self.meta_summarizer.add_evaluated_program(db_program)
