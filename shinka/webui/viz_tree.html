@@ -529,6 +529,7 @@
 
         .usage-limit-row {
             margin-bottom: 12px;
+            width: 100%;
         }
 
         .usage-limit-header {
@@ -3360,7 +3361,7 @@
             border: 1px solid #e1e4e8;
             border-radius: 8px;
             background: #fff;
-            overflow: hidden;
+            /* overflow: hidden causes incorrect height when content collapsed - removed */
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
 
@@ -3372,6 +3373,14 @@
             font-size: 14px;
             font-weight: 600;
             color: #24292e;
+        }
+
+        /* Override when h5 is inside a collapsible header - let the header handle styling */
+        .evaluation-section .collapsible-header h5 {
+            padding: 0;
+            margin: 0;
+            border: none;
+            background: transparent;
         }
 
         .evaluation-section table {
@@ -3601,10 +3610,11 @@
         }
 
         .collapsible-content {
-            padding: 0; /* Content handles its own padding if needed */
             background: #fff;
+            overflow: hidden;
+            border-radius: 0 0 8px 8px; /* Match parent's bottom corners */
         }
-        
+
         .collapsible-content pre {
             margin: 0;
             padding: 16px;
@@ -3631,16 +3641,25 @@
             border: 1px solid #e1e4e8;
             border-radius: 8px;
             background: #fff;
-            overflow: hidden;
+            /* overflow: hidden causes incorrect height when content collapsed - removed */
             box-shadow: 0 1px 2px rgba(0,0,0,0.04);
         }
 
+        /* Border is shown when content is expanded (sibling not collapsed) */
         .prompt-section .collapsible-header {
+            border-bottom: 1px solid #e1e4e8;
+        }
+
+        /* Hide border when followed by collapsed content */
+        .prompt-section .collapsible-header:has(+ .collapsible-content.collapsed) {
             border-bottom: none;
         }
-        
-        .prompt-section .collapsible-header:not(.collapsed) {
-            border-bottom: 1px solid #e1e4e8;
+
+        /* Fallback for browsers without :has() support - always show border */
+        @supports not selector(:has(*)) {
+            .prompt-section .collapsible-header {
+                border-bottom: 1px solid #e1e4e8;
+            }
         }
 
         .prompt-block {
@@ -14639,24 +14658,15 @@ ${'='.repeat(80)}
                                     </div>
                                 </div>
                                 <div id="claude-usage-view-content" style="display:none; flex: 1; padding: 12px;">
-                                    <div style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
-                                        <!-- Connected Status -->
+                                    <div style="display: flex; flex-direction: column; gap: 12px; height: 100%; width: 100%;">
+                                        <!-- Last Refresh -->
                                         <div style="display: flex; align-items: center; justify-content: space-between;">
-                                            <div style="display: flex; align-items: center; gap: 8px;">
-                                                <span style="width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block;"></span>
-                                                <span style="font-size: 13px; color: #22c55e; font-weight: 500;">Connected</span>
-                                            </div>
+                                            <span id="claude-last-refresh" style="font-size: 11px; color: #57606a;"></span>
                                             <span id="claude-account-email" style="font-size: 12px; color: #57606a;"></span>
                                         </div>
-                                        <!-- Info Box -->
-                                        <div style="background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%); border-radius: 8px; padding: 14px; flex: 1; display: flex; flex-direction: column; justify-content: center;">
-                                            <div style="display: flex; align-items: flex-start; gap: 10px;">
-                                                <span style="font-size: 24px;">🧠</span>
-                                                <div>
-                                                    <div style="font-weight: 600; color: #991b1b; margin-bottom: 4px;">Claude Code Ready</div>
-                                                    <div style="font-size: 13px; color: #b91c1c; line-height: 1.4;">Usage metrics aren't exposed by Anthropic's API yet. View your usage in the Anthropic Console.</div>
-                                                </div>
-                                            </div>
+                                        <!-- Usage Limits Container -->
+                                        <div id="claude-limits-container" style="flex: 1; overflow-y: auto; width: 100%;">
+                                            <!-- Usage bars will be populated here -->
                                         </div>
                                         <!-- Quick Action -->
                                         <a href="https://console.anthropic.com/settings/usage" target="_blank" style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; background: #f3f4f6; border-radius: 6px; color: #374151; font-size: 13px; font-weight: 500; text-decoration: none; transition: background 0.15s;">
@@ -16913,21 +16923,76 @@ ${'='.repeat(80)}
         // Alias for compatibility
         const fetchCodexUsage = fetchAndRenderAgentUsage;
 
-        // Fetch Claude CLI status and update card
-        // TODO: When Anthropic exposes a usage API for Claude Code Pro/Max subscriptions,
-        // add usage tracking here similar to Gemini and Codex.
-        // Use Anthropic brand colors for progress bars: #D97757 (coral/orange) to #C96442
+        // Fetch Claude CLI usage and update card with rate limit progress bars
+        // Uses Anthropic brand colors: #D97757 (coral/orange) to #C96442
         function fetchClaudeStatus() {
-            fetch('/api/claude_status')
+            fetch('/api/claude_usage')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.available) {
-                        // Show Claude as ready
+                    const plan = data.plan || "Claude CLI";
+                    const isAuthenticated = data.authenticated;
+
+                    if (isAuthenticated) {
+                        // Show usage view
                         document.getElementById('claude-auth-view').style.display = 'none';
                         document.getElementById('claude-usage-view-content').style.display = 'flex';
-                        document.getElementById('claude-plan-badge').textContent = 'CLI Ready';
+                        document.getElementById('claude-plan-badge').textContent = plan;
                         document.getElementById('claude-plan-badge').style.display = 'inline-block';
                         document.getElementById('claude-menu-container').style.display = 'block';
+
+                        // Populate last refresh time
+                        const refreshTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const refreshEl = document.getElementById("claude-last-refresh");
+                        if (refreshEl) refreshEl.textContent = `Last refreshed ${refreshTime}`;
+
+                        // Populate email if available
+                        const emailEl = document.getElementById("claude-account-email");
+                        if (emailEl && data.email) emailEl.textContent = data.email;
+
+                        // Populate usage limits with progress bars
+                        const limitsContainer = document.getElementById("claude-limits-container");
+                        if (limitsContainer) {
+                            if (data.error) {
+                                limitsContainer.innerHTML = `<div style="color:#cf222e; font-size:12px;">Error loading usage: ${data.error}</div>`;
+                            } else if (data.windows && data.windows.length > 0) {
+                                // Only show 5h and 7d limits (not Opus/Sonnet specific)
+                                const mainWindows = data.windows.filter(win =>
+                                    win.label === '5h limit' || win.label === '7d limit'
+                                );
+
+                                let html = '';
+                                (mainWindows.length > 0 ? mainWindows : data.windows.slice(0, 2)).forEach(win => {
+                                    const percent = Math.min(100, Math.max(0, win.percent_used));
+                                    html += `
+                                        <div class="usage-limit-row">
+                                            <div class="usage-limit-header">
+                                                <span>${win.label}</span>
+                                                ${win.reset_at_local ? `<span class="usage-limit-reset">Resets ${win.reset_at_local}</span>` : ''}
+                                            </div>
+                                            <div class="progress-bar-bg">
+                                                <!-- Anthropic brand coral #D97757 -->
+                                                <div class="progress-bar-fill" style="width: ${percent}%; background: linear-gradient(90deg, #D97757 0%, #C96442 100%);"></div>
+                                            </div>
+                                            <div class="progress-text">${win.percent_used.toFixed(1)}% used</div>
+                                        </div>
+                                    `;
+                                });
+                                limitsContainer.innerHTML = html;
+                            } else {
+                                // No windows data - show friendly message
+                                limitsContainer.innerHTML = `
+                                    <div style="background: linear-gradient(135deg, #fef3e8 0%, #fce8dc 100%); border-radius: 8px; padding: 14px;">
+                                        <div style="display: flex; align-items: flex-start; gap: 10px;">
+                                            <span style="font-size: 20px;">✨</span>
+                                            <div>
+                                                <div style="font-weight: 600; color: #9a4a2f; margin-bottom: 4px;">Claude CLI Ready</div>
+                                                <div style="font-size: 12px; color: #b55c3a; line-height: 1.4;">OAuth usage data may not be available. Try running 'claude' to refresh credentials.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        }
                     } else {
                         // Keep auth view visible
                         document.getElementById('claude-auth-view').style.display = 'flex';
@@ -16937,14 +17002,14 @@ ${'='.repeat(80)}
                     }
                 })
                 .catch(err => {
-                    console.error('Failed to fetch Claude status:', err);
+                    console.error('Failed to fetch Claude usage:', err);
                 });
         }
 
-        // Refresh Claude usage (placeholder - Claude doesn't expose usage API)
+        // Refresh Claude usage with toast notification
         function refreshClaudeUsage() {
             fetchClaudeStatus();
-            showToast('Claude status refreshed', 'info');
+            showToast('Claude usage refreshed', 'info');
         }
 
         // Jules status fetching - needs both Jules API key and GitHub token
@@ -17443,11 +17508,11 @@ ${'='.repeat(80)}
                 ${promptHtml}
                 <div class="codex-section" data-timeline-program="${domSafeId}">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Session Timeline${liveIndicator}</h5>
-                            <p class="codex-timeline-subtitle">Step-by-step reasoning and actions from the agent.</p>
+                            <span class="collapsible-subtitle">Step-by-step reasoning and actions from the agent.</span>
                         </div>
-                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}" aria-label="Toggle timeline">
+                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}" aria-label="Toggle timeline" aria-expanded="true">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18390,11 +18455,11 @@ ${'='.repeat(80)}
             return `
                 <div class="codex-section">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${sectionId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>${escapeHtml(title)}</h5>
                             <span class="collapsible-subtitle">${entries.length} metric${entries.length !== 1 ? 's' : ''}</span>
                         </div>
-                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle section">
+                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle section" aria-expanded="true">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18468,11 +18533,11 @@ ${'='.repeat(80)}
             return `
                 <div class="codex-section">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${sectionId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Evaluation Metrics</h5>
                             <span class="collapsible-subtitle">${totalMetrics} metric${totalMetrics !== 1 ? 's' : ''}</span>
                         </div>
-                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle section">
+                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle section" aria-expanded="true">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18574,11 +18639,11 @@ ${'='.repeat(80)}
             return `
                 <div class="evaluation-section evaluator-integrity" data-program-id="${programId}">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${domSafeId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Evaluation Integrity</h5>
-                            <p class="collapsible-subtitle">Audits whether the evaluator modified pre-existing files while scoring. New files (e.g. generated tests) are allowed but recorded.</p>
+                            <span class="collapsible-subtitle">Audits whether the evaluator modified pre-existing files while scoring.</span>
                         </div>
-                        <button class="icon-button" data-toggle="collapsible" data-target-id="${domSafeId}" aria-label="Toggle integrity">
+                        <button class="icon-button" data-toggle="collapsible" data-target-id="${domSafeId}" aria-label="Toggle integrity" aria-expanded="false">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18632,11 +18697,11 @@ ${'='.repeat(80)}
             return `
                 <div class="evaluation-section evaluator-metrics" data-program-id="${programId}">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${domSafeId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Agentic Evaluator Metrics</h5>
-                            <p class="collapsible-subtitle">Raw JSON returned by the agentic judge.</p>
+                            <span class="collapsible-subtitle">Raw JSON returned by the agentic judge.</span>
                         </div>
-                        <button class="icon-button" data-toggle="collapsible" data-target-id="${domSafeId}" aria-label="Toggle metrics">
+                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="${domSafeId}" aria-label="Toggle metrics" aria-expanded="true">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18764,11 +18829,11 @@ ${'='.repeat(80)}
             return `
                 <div class="evaluation-section evaluator-timeline" data-program-id="${programId}">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${timelineId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Evaluator Timeline</h5>
-                            <p class="collapsible-subtitle">Commands and reasoning issued by the agentic evaluator.</p>
+                            <span class="collapsible-subtitle">Commands and reasoning issued by the agentic evaluator.</span>
                         </div>
-                        <button class="icon-button" data-toggle="collapsible" data-target-id="${timelineId}" aria-label="Toggle evaluator timeline">
+                        <button class="icon-button" data-toggle="collapsible" data-target-id="${timelineId}" aria-label="Toggle evaluator timeline" aria-expanded="false">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -18843,15 +18908,15 @@ ${'='.repeat(80)}
             return `
                 <div class="codex-section">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${sectionId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Evaluation Logs</h5>
                             <span class="collapsible-subtitle">${hasAnyLogs ? `${stdoutLines + stderrLines} total lines` : 'No output'}</span>
                         </div>
-                        <button class="icon-button${hasAnyLogs ? ' expanded' : ''}" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle logs">
+                        <button class="icon-button${hasAnyLogs ? ' expanded' : ''}" data-toggle="collapsible" data-target-id="${sectionId}" aria-label="Toggle logs" aria-expanded="${hasAnyLogs ? 'true' : 'false'}">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
-                    <div class="collapsible-content${hasAnyLogs ? '' : ' collapsed'}" id="${sectionId}" ${hasAnyLogs ? '' : 'style="display:none;"'}>
+                    <div class="collapsible-content${hasAnyLogs ? '' : ' collapsed'}" id="${sectionId}">
                         ${logsHtml}
                     </div>
                 </div>
@@ -19331,11 +19396,11 @@ ${'='.repeat(80)}
                 ${promptHtml}
                 <div class="codex-section" data-timeline-program="${domSafeId}">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>Session Timeline</h5>
-                            <p class="codex-timeline-subtitle">Step-by-step reasoning and actions from the agent.</p>
+                            <span class="collapsible-subtitle">Step-by-step reasoning and actions from the agent.</span>
                         </div>
-                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}" aria-label="Toggle timeline">
+                        <button class="icon-button expanded" data-toggle="collapsible" data-target-id="timeline-content-${domSafeId}" aria-label="Toggle timeline" aria-expanded="true">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>
@@ -20422,11 +20487,11 @@ ${'='.repeat(80)}
             return `
                 <div class="prompt-section">
                     <div class="collapsible-header" data-toggle="collapsible" data-target-id="${domId}">
-                        <div>
+                        <div class="collapsible-header-left">
                             <h5>${escapeHtml(sectionTitle)}</h5>
-                            <p class="collapsible-subtitle">The prompts sent to the agent for this task.</p>
+                            <span class="collapsible-subtitle">The prompts sent to the agent for this task.</span>
                         </div>
-                        <button class="icon-button" data-toggle="collapsible" data-target-id="${domId}" aria-label="Toggle prompts">
+                        <button class="icon-button" data-toggle="collapsible" data-target-id="${domId}" aria-label="Toggle prompts" aria-expanded="false">
                             <span class="chevron-icon">▾</span>
                         </button>
                     </div>

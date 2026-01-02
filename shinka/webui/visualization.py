@@ -279,6 +279,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/gemini_usage":
             return self.handle_gemini_usage()
 
+        if path == "/api/claude_usage":
+            return self.handle_claude_usage()
+
         if path == "/api/credentials":
             return self.handle_credentials_get()
 
@@ -340,6 +343,9 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 elif len(parts) == 5 and parts[4] == "profiles":
                     # GET /api/cli_config/{provider}/profiles
                     return self.handle_cli_config_profiles_list(provider)
+                elif len(parts) == 5 and parts[4] == "extensions":
+                    # GET /api/cli_config/{provider}/extensions
+                    return self.handle_cli_config_extensions_list(provider)
 
         # Workspace diff and patch export endpoints
         if path == "/api/workspace_diff" and "db_path" in query:
@@ -1082,6 +1088,69 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "error": str(e),
             })
 
+    def handle_claude_usage(self):
+        """Return Claude usage and auth status (parity with Codex/Gemini)."""
+        print("[SERVER] Received request for Claude usage")
+        try:
+            from shinka.tools.claude_usage import collect_usage, ClaudeUsageError
+            from shinka.tools.auth_status import check_claude_auth
+
+            # First check auth status
+            auth_status = check_claude_auth()
+            if not auth_status.available:
+                self.send_json_response({
+                    "authenticated": False,
+                    "error": auth_status.error or "Not authenticated",
+                })
+                return
+
+            # Try to get usage data
+            try:
+                usage = collect_usage()
+                response = {
+                    "authenticated": True,
+                    "plan": usage.plan,
+                    "email": usage.email,
+                    "windows": [
+                        {
+                            "label": w.label,
+                            "percent_used": w.percent_used,
+                            "window_minutes": w.window_minutes,
+                            "reset_at": w.reset_at,
+                            "reset_at_local": w.reset_at_local,
+                        }
+                        for w in usage.windows
+                    ],
+                }
+
+                # Include extra_usage if present
+                extra = usage.raw.get("extra_usage")
+                if extra and extra.get("is_enabled"):
+                    response["extra_usage"] = {
+                        "enabled": extra.get("is_enabled", False),
+                        "monthly_limit": extra.get("monthly_limit"),
+                        "used_credits": extra.get("used_credits"),
+                        "utilization": extra.get("utilization"),
+                        "currency": extra.get("currency", "USD"),
+                    }
+
+                self.send_json_response(response)
+            except ClaudeUsageError as e:
+                # Auth file exists but usage fetch failed
+                self.send_json_response({
+                    "authenticated": True,
+                    "plan": auth_status.plan,
+                    "email": getattr(auth_status, "email", None),
+                    "error": str(e),
+                    "windows": [],
+                })
+        except Exception as e:
+            print(f"[SERVER] Error getting Claude usage: {e}")
+            self.send_json_response({
+                "authenticated": False,
+                "error": str(e),
+            })
+
     def handle_credentials_get(self):
         """Return list of configured providers and their status (no actual keys exposed)."""
         print("[SERVER] Received GET request for credentials status")
@@ -1102,13 +1171,15 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "deepseek": "deepseek",
                 "openrouter": "openrouter",
                 "azure": "azure",
+                "nanobanana": "nanobanana",
             }
-            
+
             # Additional env vars for providers not in credentials.py
             EXTRA_ENV_VARS = {
                 "deepseek": "DEEPSEEK_API_KEY",
                 "openrouter": "OPENROUTER_API_KEY",
                 "azure": "AZURE_OPENAI_API_KEY",
+                "nanobanana": "NANOBANANA_GEMINI_API_KEY",
             }
             
             store = load_credentials_store()
@@ -1151,15 +1222,16 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
         print("[SERVER] Received POST request to save credentials")
         try:
             from shinka.tools.credentials import set_api_key, remove_api_key
-            
+
             # Map frontend provider names to backend provider names
             FRONTEND_TO_BACKEND = {
                 "openai": "codex",
-                "anthropic": "claude", 
+                "anthropic": "claude",
                 "google": "gemini",
                 "deepseek": "deepseek",
                 "openrouter": "openrouter",
                 "azure": "azure",
+                "nanobanana": "nanobanana",
             }
             
             # Read the request body
@@ -4642,6 +4714,33 @@ class DatabaseRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"ok": True, "selection": selection})
         except Exception as e:
             print(f"[SERVER] Error updating profile for {provider}: {e}")
+            self.send_json_response({"ok": False, "error": str(e)})
+
+    def handle_cli_config_extensions_list(self, provider: str):
+        """List installed CLI extensions for a provider.
+
+        Currently only Gemini CLI supports extensions.
+        Returns list of extensions with their MCP servers.
+        """
+        try:
+            if provider == "gemini":
+                manager = GeminiConfigManager()
+                extensions = manager.list_extensions()
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "extensions": extensions,
+                })
+            else:
+                # Other providers don't have an extensions system
+                self.send_json_response({
+                    "ok": True,
+                    "provider": provider,
+                    "extensions": [],
+                    "message": f"{provider} does not support extensions",
+                })
+        except Exception as e:
+            print(f"[SERVER] Error listing extensions for {provider}: {e}")
             self.send_json_response({"ok": False, "error": str(e)})
 
     # ========== End CLI Config Handlers ==========
