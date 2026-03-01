@@ -241,6 +241,62 @@ async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "service": "sse"})
 
 
+async def handle_publish_event(request: web.Request) -> web.Response:
+    """Handle HTTP POST event publishing from EventPublisher.
+
+    This endpoint allows the evolution runner (running in a separate process or
+    thread) to push events directly to connected SSE clients without going
+    through file-based polling.
+
+    POST /api/events/publish
+    Body: {"topic": "tree:...", "event_type": "node_created", "data": {...}}
+
+    Returns:
+        JSON response with count of clients notified.
+    """
+    sse_manager = get_sse_manager()
+
+    try:
+        payload = await request.json()
+        topic = payload.get("topic", "")
+        event_type = payload.get("event_type", "")
+        data = payload.get("data", {})
+
+        if not topic or not event_type:
+            return web.json_response(
+                {"error": "Missing topic or event_type"},
+                status=400,
+            )
+
+        # Validate topic format (security check)
+        search_root = request.app.get("search_root")
+        if not validate_topic(topic, search_root):
+            return web.json_response(
+                {"error": "Invalid topic format"},
+                status=400,
+            )
+
+        # Broadcast to all subscribers
+        count = await sse_manager.broadcast(topic, event_type, data)
+        logger.debug(
+            f"Published event via HTTP: topic={topic}, type={event_type}, "
+            f"clients={count}"
+        )
+        return web.json_response({"clients_notified": count})
+
+    except json.JSONDecodeError:
+        return web.json_response(
+            {"error": "Invalid JSON body"},
+            status=400,
+        )
+    except Exception as e:
+        logger.error(f"Publish event error: {e}")
+        return web.json_response(
+            {"error": str(e)},
+            status=500,
+        )
+
+
 async def heartbeat_loop(sse_manager: SSEManager) -> None:
     """Send periodic heartbeats to all connected clients."""
     while True:
@@ -312,6 +368,7 @@ def create_sse_app(search_root: Optional[str] = None) -> web.Application:
     app.router.add_get("/api/events", handle_sse_events)
     app.router.add_get("/api/sse/stats", handle_stats)
     app.router.add_get("/health", handle_health)
+    app.router.add_post("/api/events/publish", handle_publish_event)
 
     # Add CORS middleware - only allow localhost origins (security hardening)
     def _is_allowed_origin(origin: str) -> bool:
@@ -336,7 +393,7 @@ def create_sse_app(search_root: Optional[str] = None) -> web.Application:
             return web.Response(
                 headers={
                     "Access-Control-Allow-Origin": origin or "http://localhost:8000",
-                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                     "Access-Control-Allow-Headers": "Content-Type, Last-Event-ID",
                 }
             )

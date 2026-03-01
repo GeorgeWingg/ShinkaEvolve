@@ -139,7 +139,8 @@ def run_gemini_task(
 
     for key, value in extra_cli_config.items():
         # Reserved keys: no_extensions/debug_log handled separately, model is ShinkaAgent-only
-        if key in {"no_extensions", "debug_log", "model"}:
+        # model_reasoning_effort is Codex-specific and not supported by Gemini CLI
+        if key in {"no_extensions", "debug_log", "model", "model_reasoning_effort"}:
             continue
         if value is None:
             continue

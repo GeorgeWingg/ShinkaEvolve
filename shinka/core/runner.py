@@ -88,6 +88,11 @@ from shinka.core.embedding_corpus import (
 )
 from shinka.logo import print_gradient_logo
 from shinka.webui.git_worktree import EvolutionGitManager
+from shinka.webui.event_publisher import (
+    EventPublisher,
+    create_event_publisher,
+    set_event_publisher,
+)
 
 # -----------------------------------------------------------------------------
 # Thread-Safety Model
@@ -571,6 +576,8 @@ class EvolutionConfig:
     max_score: float = 1.0  # Maximum possible score (defines the scale)
     # Stagnation detection: stop early if best score hasn't improved for N generations
     stagnation_generations: int = 20  # 0 = disabled
+    # Real-time SSE event publishing for live UI updates
+    enable_sse_events: bool = True  # Push events directly to SSE server
 
 
 @dataclass
@@ -1076,6 +1083,19 @@ class EvolutionRunner:
                 f"Initialized agentic edit+eval executors with {max_workers} workers each"
             )
 
+        # Initialize EventPublisher for real-time SSE updates
+        # This allows the runner to push events directly to connected UI clients
+        self.event_publisher: Optional[EventPublisher] = None
+        if evo_config.enable_sse_events:
+            self.event_publisher = create_event_publisher(
+                db_path=str(db_path),
+                results_dir=str(self.results_dir),
+                auto_start=True,
+                set_global=True,
+            )
+            if self.verbose:
+                logger.info("EventPublisher initialized for real-time SSE updates")
+
         # Check if db exists but is empty (failed previous run)
         # Note: last_iteration defaults to 0, so we need to check actual program count
         if resuming_run and self.db._count_programs_in_db() == 0:
@@ -1126,11 +1146,20 @@ class EvolutionRunner:
                 pass  # Ignore errors during cleanup
 
     def _shutdown_executors(self) -> None:
-        """Best-effort shutdown of thread pools.
+        """Best-effort shutdown of thread pools and EventPublisher.
 
         Pytest can hang if ThreadPoolExecutor worker threads stay alive after
         tests finish. We shutdown non-blockingly on interpreter exit.
         """
+        # Stop EventPublisher first so it can flush pending events
+        event_publisher = getattr(self, "event_publisher", None)
+        if event_publisher is not None:
+            try:
+                event_publisher.stop(timeout=2.0)
+                set_event_publisher(None)  # Clear global reference
+            except Exception as e:
+                logger.debug(f"Error stopping EventPublisher (ignored): {e}")
+
         for executor in (getattr(self, "_agentic_edit_executor", None), getattr(self, "_agentic_executor", None)):
             if executor is None:
                 continue
@@ -1229,6 +1258,13 @@ class EvolutionRunner:
             f"target: {target_gens} generations"
         )
 
+        # Emit run started event
+        if self.event_publisher:
+            self.event_publisher.emit_run_started(
+                num_generations=target_gens,
+                max_parallel_jobs=max_jobs,
+            )
+
         try:
             # First, run generation 0 sequentially to populate the database
             if self.completed_generations == 0 and target_gens > 0:
@@ -1322,6 +1358,14 @@ class EvolutionRunner:
 
         self.db.print_summary()
         logger.info(f"Evolution completed! {self.completed_generations} generations")
+
+        # Emit run completed event
+        if self.event_publisher:
+            self.event_publisher.emit_run_completed(
+                total_generations=self.completed_generations,
+                best_score=best_program.combined_score if best_program else None,
+            )
+
         logger.info("=" * 80)
         end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"Evolution run ended at {end_time}")
@@ -2639,6 +2683,23 @@ class EvolutionRunner:
             else None
         )
         self.db.add(db_program, verbose=True, parent_island_idx=parent_island_idx)
+
+        # Emit SSE events for real-time UI updates
+        if self.event_publisher:
+            self.event_publisher.emit_node_created(
+                generation=db_program.generation,
+                node_id=db_program.id,
+                parent_id=db_program.parent_id,
+                score=db_program.combined_score,
+                correct=correct_val,
+            )
+            self.event_publisher.emit_evaluation_completed(
+                generation=db_program.generation,
+                node_id=db_program.id,
+                score=db_program.combined_score,
+                correct=correct_val,
+                runtime=job.elapsed_time,
+            )
 
         # Check for scheduled operations (island migration, etc.)
         self.db.check_scheduled_operations()

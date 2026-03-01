@@ -215,10 +215,14 @@ class GeminiConfigManager:
     Gemini CLI uses JSON format with MCP servers in the 'mcpServers' key.
     We manage a 'shinka' section for our custom settings while preserving
     the rest of the user's configuration.
+
+    Also scans ~/.gemini/extensions/ for extension-defined MCP servers.
     """
 
     def __init__(self, config_path: Optional[Path] = None):
         self.config_path = config_path or Path.home() / ".gemini" / "settings.json"
+        self.extensions_dir = self.config_path.parent / "extensions"
+        self.extension_enablement_path = self.extensions_dir / "extension-enablement.json"
 
     def _ensure_dir_exists(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,12 +242,150 @@ class GeminiConfigManager:
         self._ensure_dir_exists()
         self.config_path.write_text(json.dumps(data, indent=2) + "\n")
 
+    def _load_extension_enablement(self) -> Dict[str, Any]:
+        """Load the extension-enablement.json file."""
+        if not self.extension_enablement_path.exists():
+            return {}
+        try:
+            return json.loads(self.extension_enablement_path.read_text())
+        except Exception as e:
+            logger.warning(f"Failed to load extension enablement: {e}")
+            return {}
+
+    def _scan_extensions(self) -> List[MCPServer]:
+        """Scan ~/.gemini/extensions/ for extension-defined MCP servers.
+
+        Each extension can have a gemini-extension.json that defines MCP servers:
+        {
+            "name": "extension-name",
+            "mcpServers": {
+                "server-name": {
+                    "command": "node",
+                    "args": ["${extensionPath}/mcp-server/dist/index.js"],
+                    "env": {}
+                }
+            }
+        }
+
+        Returns:
+            List of MCPServer objects from enabled extensions.
+        """
+        if not self.extensions_dir.exists():
+            return []
+
+        enablement = self._load_extension_enablement()
+        servers = []
+
+        for ext_dir in self.extensions_dir.iterdir():
+            if not ext_dir.is_dir():
+                continue
+
+            ext_name = ext_dir.name
+            ext_json_path = ext_dir / "gemini-extension.json"
+
+            if not ext_json_path.exists():
+                continue
+
+            # Check if extension is enabled (extensions are enabled by default)
+            # If enablement entry exists, it's enabled; if it has "disabled": true, it's disabled
+            ext_enablement = enablement.get(ext_name, {})
+            if isinstance(ext_enablement, dict) and ext_enablement.get("disabled", False):
+                logger.debug(f"Skipping disabled extension: {ext_name}")
+                continue
+
+            try:
+                ext_config = json.loads(ext_json_path.read_text())
+                mcp_servers_config = ext_config.get("mcpServers", {})
+
+                for server_name, server_config in mcp_servers_config.items():
+                    if not isinstance(server_config, dict):
+                        continue
+
+                    # Resolve ${extensionPath} placeholder in command and args
+                    command = server_config.get("command", "")
+                    args = server_config.get("args", [])
+                    env = server_config.get("env")
+
+                    # Replace ${extensionPath} with actual path
+                    ext_path_str = str(ext_dir)
+                    command = command.replace("${extensionPath}", ext_path_str)
+                    args = [arg.replace("${extensionPath}", ext_path_str) for arg in args]
+
+                    servers.append(MCPServer(
+                        name=server_name,
+                        command=command,
+                        args=args,
+                        env=env if env else None,
+                    ))
+                    logger.debug(f"Found extension MCP server: {server_name} from {ext_name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to load extension {ext_name}: {e}")
+                continue
+
+        return servers
+
+    def list_extensions(self) -> List[Dict[str, Any]]:
+        """List all installed Gemini CLI extensions.
+
+        Returns:
+            List of extension info dicts with:
+            - name: Extension name
+            - version: Extension version
+            - path: Extension directory path
+            - enabled: Whether the extension is enabled
+            - mcp_servers: List of MCP server names defined by this extension
+            - description: Extension description (if available)
+        """
+        if not self.extensions_dir.exists():
+            return []
+
+        enablement = self._load_extension_enablement()
+        extensions = []
+
+        for ext_dir in self.extensions_dir.iterdir():
+            if not ext_dir.is_dir():
+                continue
+
+            ext_name = ext_dir.name
+            ext_json_path = ext_dir / "gemini-extension.json"
+
+            if not ext_json_path.exists():
+                continue
+
+            try:
+                ext_config = json.loads(ext_json_path.read_text())
+
+                # Check enablement
+                ext_enablement = enablement.get(ext_name, {})
+                is_enabled = True
+                if isinstance(ext_enablement, dict) and ext_enablement.get("disabled", False):
+                    is_enabled = False
+
+                # Get MCP server names
+                mcp_server_names = list(ext_config.get("mcpServers", {}).keys())
+
+                extensions.append({
+                    "name": ext_config.get("name", ext_name),
+                    "version": ext_config.get("version", "unknown"),
+                    "path": str(ext_dir),
+                    "enabled": is_enabled,
+                    "mcp_servers": mcp_server_names,
+                    "description": ext_config.get("description", ""),
+                })
+
+            except Exception as e:
+                logger.warning(f"Failed to read extension {ext_name}: {e}")
+                continue
+
+        return sorted(extensions, key=lambda x: x["name"])
+
     def load_config(self) -> CLIConfig:
-        """Load the configuration."""
+        """Load the configuration including MCP servers from settings.json and extensions."""
         data = self._load_json()
         shinka_config = data.get("shinka", {})
 
-        # Parse MCP servers - Gemini uses 'mcpServers' key
+        # Parse MCP servers from settings.json - Gemini uses 'mcpServers' key
         mcp_servers = []
         mcp_data = data.get("mcpServers", {})
         for name, server_config in mcp_data.items():
@@ -254,6 +396,15 @@ class GeminiConfigManager:
                     args=server_config.get("args", []),
                     env=server_config.get("env"),
                 ))
+
+        # Also scan extensions for MCP servers
+        extension_servers = self._scan_extensions()
+        # Merge extension servers, avoiding duplicates (settings.json takes precedence)
+        existing_names = {s.name for s in mcp_servers}
+        for ext_server in extension_servers:
+            if ext_server.name not in existing_names:
+                mcp_servers.append(ext_server)
+                existing_names.add(ext_server.name)
 
         return CLIConfig(
             system_prompt=shinka_config.get("system_prompt"),

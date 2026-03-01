@@ -18,12 +18,32 @@ DEFAULT_METRICS_ON_ERROR = {
 
 
 def load_program(program_path: str) -> Any:
-    """Loads a Python module dynamically from a given file path."""
-    spec = importlib.util.spec_from_file_location("program", program_path)
+    """Loads a Python module dynamically from a given file or directory path.
+
+    For directories (agentic multi-file mode), looks for common entry points:
+    initial.py, main.py, __init__.py in that order.
+    """
+    actual_path = program_path
+
+    # Handle directory paths (agentic multi-file mode)
+    if os.path.isdir(program_path):
+        entry_points = ["initial.py", "main.py", "__init__.py"]
+        for entry in entry_points:
+            candidate = os.path.join(program_path, entry)
+            if os.path.isfile(candidate):
+                actual_path = candidate
+                break
+        else:
+            raise ImportError(
+                f"Could not find entry point ({', '.join(entry_points)}) "
+                f"in directory {program_path}"
+            )
+
+    spec = importlib.util.spec_from_file_location("program", actual_path)
     if spec is None:
-        raise ImportError(f"Could not load spec for module at {program_path}")
+        raise ImportError(f"Could not load spec for module at {actual_path}")
     if spec.loader is None:
-        raise ImportError(f"Spec loader is None for module at {program_path}")
+        raise ImportError(f"Spec loader is None for module at {actual_path}")
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

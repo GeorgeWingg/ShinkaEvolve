@@ -66,13 +66,13 @@ in `<EVAL_ERROR>...</EVAL_ERROR>`.
 Additionally, if you can infer a safe way for a human to run or demo the evolved
 program (not the evaluation command), include a `private` object like:
 ```json
-{
-  "private": {
+{{
+  "private": {{
     "run_command": "<single shell command to run the program>",
     "run_workdir": "<optional relative dir to run from, e.g. 'best' or 'gen_7'>",
     "run_notes": "<optional brief notes or warnings>"
-  }
-}
+  }}
+}}
 ```
 If you cannot determine a safe runnable command, omit the `private.run_command`
 fields rather than guessing.

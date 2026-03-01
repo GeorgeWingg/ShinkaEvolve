@@ -41,6 +41,7 @@ PROVIDERS = [
     "deepseek",
     "openrouter",
     "azure",
+    "nanobanana",
 ]
 
 # Map provider names to their environment variable equivalents
@@ -54,6 +55,12 @@ ENV_VAR_MAP = {
     "deepseek": "DEEPSEEK_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
+    "nanobanana": "NANOBANANA_GEMINI_API_KEY",
+}
+
+# Additional environment variables for extensions/tools (not primary providers)
+EXTENSION_ENV_VARS = {
+    "nanobanana_model": "NANOBANANA_MODEL",
 }
 
 # Track if we've already tried migration this session
